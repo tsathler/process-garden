@@ -66,6 +66,21 @@ func get_selected_creature() -> ProcessCreature:
 	return get_creature(_selected_identity) if not _selected_identity.is_empty() else null
 
 
+func clear_for_source_change() -> void:
+	_latest_processes.clear()
+	_is_reconciling = false
+	_set_selected_identity("")
+	for identity in _creatures.keys():
+		var creature := _creatures[identity] as ProcessCreature
+		if creature.despawn_finished.is_connected(_on_creature_despawn_finished):
+			creature.despawn_finished.disconnect(_on_creature_despawn_finished)
+		if creature.get_parent() != null:
+			creature.get_parent().remove_child(creature)
+		creature.queue_free()
+	_creatures.clear()
+	representation_changed.emit(0)
+
+
 func select_at(local_position: Vector2) -> String:
 	var global_point := to_global(local_position)
 	var best: ProcessCreature

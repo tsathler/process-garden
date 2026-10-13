@@ -4,6 +4,7 @@ const Parser = preload("res://scripts/snapshot_parser.gd")
 const Registry = preload("res://scripts/process_registry.gd")
 const Selector = preload("res://scripts/process_selector.gd")
 const GardenControllerScript = preload("res://scripts/garden_controller.gd")
+const DemoSnapshotSourceScript = preload("res://scripts/demo_snapshot_source.gd")
 const CreatureScene: PackedScene = preload("res://scenes/creature.tscn")
 const MainScene: PackedScene = preload("res://scenes/main.tscn")
 
@@ -27,6 +28,8 @@ func _run() -> void:
 	await _test_despawn_reuse_and_capacity()
 	_test_separation_and_click_selection()
 	await _test_click_routing_and_process_details()
+	await _test_demo_snapshot_source()
+	await _test_demo_mode_switching()
 	_test_add_persist_remove_and_pid_reuse()
 	_test_repeat_and_partial_preserve_processes()
 	_test_restart_and_freshness()
@@ -576,6 +579,240 @@ func _test_click_routing_and_process_details() -> void:
 	_check(garden.get_selected_identity().is_empty(), "empty garden click clears selection")
 	_check(not details_panel.visible, "clearing selection hides the details panel")
 	main.call("_on_close_details_pressed")
+	main.queue_free()
+	await process_frame
+
+
+func _test_demo_snapshot_source() -> void:
+	var source := DemoSnapshotSourceScript.new() as DemoSnapshotSource
+	root.add_child(source)
+	var snapshots: Array[Dictionary] = []
+	source.snapshot_generated.connect(func(snapshot: Dictionary): snapshots.append(snapshot))
+	source.interval_seconds = 3600.0
+	source.configure(50, 4242)
+	source.start()
+	_check(snapshots.size() == 1, "demo source emits an initial snapshot when started")
+	if snapshots.is_empty():
+		_check(false, "demo source produces a snapshot fixture")
+		source.stop()
+		source.queue_free()
+		await process_frame
+		return
+	var initial: Dictionary = snapshots[0]
+	var parsed := Parser.validate_data(initial)
+	_check(parsed["ok"], "demo source snapshot matches the existing JSON contract")
+	_check(initial["processes"].size() == 50, "50-process scenario starts with 50 records")
+	var original_processes: Array = initial["processes"].duplicate(true)
+	source.advance_one_step()
+	if snapshots.size() < 2:
+		_check(false, "demo source emits the next process sample")
+		source.stop()
+		source.queue_free()
+		await process_frame
+		return
+	var after_birth: Dictionary = snapshots[1]
+	_check(after_birth["sequence"] == 2, "demo sequence increments for the next sample")
+	_check(after_birth["processes"].size() == 51, "demo lifecycle creates a process")
+	var initial_by_identity := _processes_by_identity(original_processes)
+	var after_birth_by_identity := _processes_by_identity(after_birth["processes"])
+	var new_identity := ""
+	for identity in after_birth_by_identity:
+		if not initial_by_identity.has(identity):
+			new_identity = str(identity)
+	_check(not new_identity.is_empty(), "new demo process receives a new logical identity")
+	var stable_identity := str(initial_by_identity.keys()[0])
+	var initial_stable: Dictionary = initial_by_identity[stable_identity]
+	var updated_stable: Dictionary = after_birth_by_identity[stable_identity]
+	_check(
+		initial_stable["cpu_percent"] != updated_stable["cpu_percent"]
+		or initial_stable["memory_rss_bytes"] != updated_stable["memory_rss_bytes"],
+		"demo snapshots change CPU or RAM metrics over time"
+	)
+	source.advance_one_step()
+	source.advance_one_step()
+	if snapshots.size() < 4:
+		_check(false, "demo source emits the process exit sample")
+		source.stop()
+		source.queue_free()
+		await process_frame
+		return
+	var after_exit: Dictionary = snapshots[3]
+	_check(after_exit["processes"].size() == 50, "demo lifecycle ends a process")
+	var after_exit_by_identity := _processes_by_identity(after_exit["processes"])
+	_check(
+		after_exit_by_identity.has(new_identity),
+		"newly spawned identity remains active when an existing process ends"
+	)
+	var ended_process: Dictionary = {}
+	var ended_identity := ""
+	for identity in after_birth_by_identity:
+		if not after_exit_by_identity.has(identity):
+			ended_identity = str(identity)
+			ended_process = after_birth_by_identity[identity]
+	_check(not ended_process.is_empty(), "demo snapshot identifies the ended process")
+	_check(
+		not after_exit_by_identity.has(ended_identity),
+		"ended identity is absent from the complete snapshot"
+	)
+	source.advance_one_step()
+	source.advance_one_step()
+	if snapshots.size() < 6:
+		_check(false, "demo source emits the PID reuse sample")
+		source.stop()
+		source.queue_free()
+		await process_frame
+		return
+	var after_pid_reuse: Dictionary = snapshots[5]
+	var reused_pid_found := false
+	for process in after_pid_reuse["processes"]:
+		if int(process["pid"]) == int(ended_process.get("pid", -1)):
+			reused_pid_found = float(process["create_time"]) != float(ended_process["create_time"])
+	_check(reused_pid_found, "reused demo PID receives a different create_time")
+	_check(_demo_scenarios_have_expected_sizes(), "all supported scenarios have the requested population")
+	var duplicate := DemoSnapshotSourceScript.new() as DemoSnapshotSource
+	root.add_child(duplicate)
+	var duplicate_snapshots: Array[Dictionary] = []
+	duplicate.snapshot_generated.connect(func(snapshot: Dictionary): duplicate_snapshots.append(snapshot))
+	duplicate.interval_seconds = 3600.0
+	duplicate.configure(50, 4242)
+	duplicate.start()
+	if duplicate_snapshots.is_empty():
+		_check(false, "same-seed demo source emits its initial fixture")
+		source.stop()
+		duplicate.stop()
+		source.queue_free()
+		duplicate.queue_free()
+		await process_frame
+		return
+	_check(
+		JSON.stringify(duplicate_snapshots[0]["processes"])
+		== JSON.stringify(initial["processes"]),
+		"same demo seed reproduces process identities and initial metrics"
+	)
+	var alternate_seed := DemoSnapshotSourceScript.new() as DemoSnapshotSource
+	root.add_child(alternate_seed)
+	var alternate_snapshots: Array[Dictionary] = []
+	alternate_seed.snapshot_generated.connect(func(snapshot: Dictionary): alternate_snapshots.append(snapshot))
+	alternate_seed.interval_seconds = 3600.0
+	alternate_seed.configure(50, 4243)
+	alternate_seed.start()
+	if alternate_snapshots.is_empty():
+		_check(false, "alternate-seed demo source emits its initial fixture")
+		source.stop()
+		duplicate.stop()
+		alternate_seed.stop()
+		source.queue_free()
+		duplicate.queue_free()
+		alternate_seed.queue_free()
+		await process_frame
+		return
+	_check(
+		JSON.stringify(alternate_snapshots[0]["processes"])
+		!= JSON.stringify(initial["processes"]),
+		"changing the demo seed changes the reproducible process data"
+	)
+	source.stop()
+	duplicate.stop()
+	alternate_seed.stop()
+	source.queue_free()
+	duplicate.queue_free()
+	alternate_seed.queue_free()
+	await process_frame
+
+
+func _processes_by_identity(processes: Array) -> Dictionary:
+	var result := {}
+	for process in processes:
+		result[Parser.identity_key(process)] = process
+	return result
+
+
+func _demo_scenarios_have_expected_sizes() -> bool:
+	for population in [50, 150, 300, 500]:
+		var source := DemoSnapshotSourceScript.new() as DemoSnapshotSource
+		root.add_child(source)
+		var snapshots: Array[Dictionary] = []
+		source.snapshot_generated.connect(func(snapshot: Dictionary): snapshots.append(snapshot))
+		source.interval_seconds = 3600.0
+		source.configure(population, 1)
+		source.start()
+		var valid_size: bool = (
+			snapshots.size() == 1 and snapshots[0]["processes"].size() == population
+		)
+		source.stop()
+		source.queue_free()
+		if not valid_size:
+			return false
+	return true
+
+
+func _test_demo_mode_switching() -> void:
+	var main := MainScene.instantiate() as Control
+	var client := main.get_node("SnapshotClient") as SnapshotClient
+	client.endpoint_url = "http://127.0.0.1:0/v1/snapshot"
+	root.add_child(main)
+	await process_frame
+	var garden := main.get_node("Garden") as GardenController
+	var mode_option := main.find_child("SourceMode", true, false) as OptionButton
+	mode_option.select(1)
+	mode_option.item_selected.emit(1)
+	var demo_source := main.get("_demo_source") as DemoSnapshotSource
+	demo_source.stop()
+	demo_source.interval_seconds = 3600.0
+	demo_source.start()
+	var scenario_option := main.find_child("DemoScenario", true, false) as OptionButton
+	scenario_option.select(2)
+	scenario_option.item_selected.emit(2)
+	_check(
+		(main.get("_registry") as ProcessRegistry).get_tracked_count() == 300,
+		"demo scenario selector restarts with the selected population"
+	)
+	scenario_option.select(1)
+	scenario_option.item_selected.emit(1)
+	var seed_input := main.find_child("DemoSeed", true, false) as SpinBox
+	seed_input.value = 4242.0
+	var demo_registry: ProcessRegistry = main.get("_registry")
+	var demo_records := demo_registry.get_records()
+	_check(main.get("_source_mode") == "DEMO", "DEMO can be selected explicitly")
+	var status_label := main.get("_status_label") as Label
+	_check(status_label.text.contains("DEMO · SIMULATED"), "header clearly marks simulated data")
+	_check(demo_registry.get_tracked_count() == 150, "demo feeds its snapshot through ProcessRegistry")
+	_check(garden.get_creature_count() <= 60, "demo preserves the garden creature limit")
+	if demo_records.is_empty():
+		_check(false, "demo mode provides synthetic process records")
+		main.queue_free()
+		await process_frame
+		return
+	_check(
+		str(demo_records[0]["name"]).begins_with("demo-"),
+		"demo mode is visibly backed by synthetic process names"
+	)
+	var demo_identity: String = Parser.identity_key(demo_records[0])
+	mode_option.select(0)
+	mode_option.item_selected.emit(0)
+	var real_registry: ProcessRegistry = main.get("_registry")
+	_check(main.get("_source_mode") == "REAL", "REAL can be selected explicitly")
+	_check(real_registry.get_tracked_count() == 0, "switching sources clears the previous registry")
+	_check(garden.get_creature_count() == 0, "switching sources clears old creature identities immediately")
+	var real_process := _proc(int(demo_records[0]["pid"]), float(demo_records[0]["create_time"]), 0.0)
+	var accepted := Parser.validate_data(_snapshot(1, Time.get_unix_time_from_system(), "ok", [real_process]))
+	main.call("_on_snapshot_received", accepted["snapshot"])
+	_check(real_registry.get_tracked_count() == 1, "real snapshot enters the fresh registry")
+	var creature_after_source_change := garden.get_creature(demo_identity)
+	_check(
+		creature_after_source_change == null
+		or creature_after_source_change.process_name == real_process["name"],
+		"same PID and create_time cannot retain a demo creature across sources"
+	)
+	mode_option.select(1)
+	mode_option.item_selected.emit(1)
+	var switched_back_registry: ProcessRegistry = main.get("_registry")
+	_check(
+		switched_back_registry.get_tracked_count() == 150,
+		"switching back to demo starts a fresh deterministic source"
+	)
+	mode_option.select(0)
+	mode_option.item_selected.emit(0)
 	main.queue_free()
 	await process_frame
 

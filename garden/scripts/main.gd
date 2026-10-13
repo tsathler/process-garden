@@ -1,6 +1,10 @@
 extends Control
 
 const ProcessRegistryScript = preload("res://scripts/process_registry.gd")
+const DemoSnapshotSourceScript = preload("res://scripts/demo_snapshot_source.gd")
+
+const SOURCE_REAL := "REAL"
+const SOURCE_DEMO := "DEMO"
 
 var _registry: ProcessRegistry
 var _garden: GardenController
@@ -13,14 +17,21 @@ var _details_pid_label: Label
 var _details_metrics_label: Label
 var _details_state_label: Label
 var _refresh_timer: Timer
+var _source_mode_option: OptionButton
+var _demo_controls: HBoxContainer
+var _demo_scenario_option: OptionButton
+var _demo_seed_input: SpinBox
+var _demo_source: DemoSnapshotSource
+var _source_mode := SOURCE_REAL
+var _demo_population := 150
+var _demo_seed := 2025
 var _last_monitored_count := 0
 var _last_represented_count := 0
 var _last_connection_state := ""
 
 
 func _ready() -> void:
-	_registry = ProcessRegistryScript.new()
-	_registry.connection_state_changed.connect(_on_connection_state_changed)
+	_registry = _new_registry()
 	_garden = get_node("Garden") as GardenController
 	_garden.representation_changed.connect(_on_representation_changed)
 	_garden.selection_changed.connect(_on_selection_changed)
@@ -34,6 +45,74 @@ func _ready() -> void:
 	add_child(_refresh_timer)
 	_refresh_timer.start()
 	_refresh_status()
+
+
+func _new_registry() -> ProcessRegistry:
+	var registry := ProcessRegistryScript.new() as ProcessRegistry
+	registry.connection_state_changed.connect(_on_connection_state_changed)
+	return registry
+
+
+func set_source_mode(mode: String) -> bool:
+	if mode != SOURCE_REAL and mode != SOURCE_DEMO:
+		return false
+	if mode == _source_mode:
+		return true
+	var client := get_node("SnapshotClient") as SnapshotClient
+	client.set_polling_enabled(false)
+	if _demo_source != null:
+		_demo_source.stop()
+	_reset_source_state()
+	_source_mode = mode
+	_source_mode_option.select(0 if mode == SOURCE_REAL else 1)
+	_demo_controls.visible = mode == SOURCE_DEMO
+	if mode == SOURCE_DEMO:
+		_start_demo_source()
+	else:
+		client.set_polling_enabled(true)
+	_refresh_status()
+	_refresh_details()
+	return true
+
+
+func _reset_source_state() -> void:
+	_registry = _new_registry()
+	_last_monitored_count = 0
+	_last_represented_count = 0
+	_garden.clear_for_source_change()
+
+
+func _start_demo_source() -> void:
+	if _demo_source == null:
+		_demo_source = DemoSnapshotSourceScript.new() as DemoSnapshotSource
+		_demo_source.name = "DemoSnapshotSource"
+		_demo_source.snapshot_generated.connect(_on_snapshot_received)
+		add_child(_demo_source)
+	_demo_source.configure(_demo_population, _demo_seed)
+	_demo_source.start()
+
+
+func _restart_demo_source() -> void:
+	if _source_mode != SOURCE_DEMO or _demo_source == null:
+		return
+	_demo_source.stop()
+	_reset_source_state()
+	_demo_source.configure(_demo_population, _demo_seed)
+	_demo_source.start()
+
+
+func _on_source_mode_selected(index: int) -> void:
+	set_source_mode(SOURCE_DEMO if _source_mode_option.get_item_id(index) == 1 else SOURCE_REAL)
+
+
+func _on_demo_scenario_selected(index: int) -> void:
+	_demo_population = _demo_scenario_option.get_item_id(index)
+	_restart_demo_source()
+
+
+func _on_demo_seed_changed(value: float) -> void:
+	_demo_seed = int(value)
+	_restart_demo_source()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -64,7 +143,7 @@ func _build_overlay() -> void:
 	panel.anchor_left = 0.02
 	panel.anchor_top = 0.025
 	panel.anchor_right = 0.98
-	panel.offset_bottom = 63.0
+	panel.offset_bottom = 78.0
 	panel.add_theme_stylebox_override("panel", _make_panel_style())
 	add_child(panel)
 
@@ -97,15 +176,59 @@ func _build_overlay() -> void:
 	status_column.alignment = BoxContainer.ALIGNMENT_END
 	status_column.add_theme_constant_override("separation", 2)
 	row.add_child(status_column)
+	var connection_row := HBoxContainer.new()
+	connection_row.add_theme_constant_override("separation", 5)
+	status_column.add_child(connection_row)
 	_status_label = Label.new()
+	_status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_status_label.add_theme_font_size_override("font_size", 12)
-	status_column.add_child(_status_label)
+	connection_row.add_child(_status_label)
+	_source_mode_option = OptionButton.new()
+	_source_mode_option.name = "SourceMode"
+	_source_mode_option.add_item("REAL", 0)
+	_source_mode_option.add_item("DEMO", 1)
+	_source_mode_option.select(0)
+	_source_mode_option.custom_minimum_size = Vector2(72.0, 24.0)
+	_source_mode_option.item_selected.connect(_on_source_mode_selected)
+	connection_row.add_child(_source_mode_option)
+	var info_row := HBoxContainer.new()
+	info_row.add_theme_constant_override("separation", 5)
+	status_column.add_child(info_row)
 	_counts_label = Label.new()
+	_counts_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_counts_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_counts_label.add_theme_font_size_override("font_size", 10)
 	_counts_label.add_theme_color_override("font_color", Color("#9bb7b6"))
-	status_column.add_child(_counts_label)
+	info_row.add_child(_counts_label)
+	_demo_controls = HBoxContainer.new()
+	_demo_controls.name = "DemoSettings"
+	_demo_controls.add_theme_constant_override("separation", 3)
+	_demo_controls.visible = false
+	info_row.add_child(_demo_controls)
+	_demo_scenario_option = OptionButton.new()
+	_demo_scenario_option.name = "DemoScenario"
+	_demo_scenario_option.add_item("50", 50)
+	_demo_scenario_option.add_item("150", 150)
+	_demo_scenario_option.add_item("300", 300)
+	_demo_scenario_option.add_item("500", 500)
+	_demo_scenario_option.select(1)
+	_demo_scenario_option.custom_minimum_size = Vector2(68.0, 22.0)
+	_demo_scenario_option.item_selected.connect(_on_demo_scenario_selected)
+	_demo_controls.add_child(_demo_scenario_option)
+	var seed_label := Label.new()
+	seed_label.text = "SEED"
+	seed_label.add_theme_font_size_override("font_size", 9)
+	_demo_controls.add_child(seed_label)
+	_demo_seed_input = SpinBox.new()
+	_demo_seed_input.name = "DemoSeed"
+	_demo_seed_input.min_value = 0.0
+	_demo_seed_input.max_value = 2_147_483_647.0
+	_demo_seed_input.step = 1.0
+	_demo_seed_input.value = _demo_seed
+	_demo_seed_input.custom_minimum_size = Vector2(76.0, 22.0)
+	_demo_seed_input.value_changed.connect(_on_demo_seed_changed)
+	_demo_controls.add_child(_demo_seed_input)
 
 	_error_label = Label.new()
 	_error_label.anchor_left = 0.02
@@ -223,6 +346,15 @@ func _refresh_status() -> void:
 	var state: Dictionary = _registry.update_connection_state(
 		Time.get_unix_time_from_system(), Time.get_ticks_msec()
 	)
+	if _source_mode == SOURCE_DEMO:
+		_status_label.text = "DEMO · SIMULATED"
+		_status_label.add_theme_color_override("font_color", Color("#7de0bf"))
+		_counts_label.text = "%d simulated · %d represented" % [
+			_last_monitored_count,
+			_last_represented_count,
+		]
+		_error_label.text = ""
+		return
 	var freshness := "waiting for collector"
 	if state["has_snapshot"]:
 		freshness = "data %.1fs old" % state["age_seconds"]
@@ -266,7 +398,10 @@ func _refresh_details() -> void:
 
 	var state_text := "LIVE · latest accepted metrics"
 	var state_color := Color("#7de0bf")
-	if creature.state == ProcessCreature.State.DESPAWNING:
+	if _source_mode == SOURCE_DEMO:
+		state_text = "DEMO · SIMULATED METRICS"
+		state_color = Color("#7de0bf")
+	elif creature.state == ProcessCreature.State.DESPAWNING:
 		state_text = "LEAVING GARDEN · last known metrics"
 		state_color = Color("#e9be78")
 	elif _registry.connection_state == ProcessRegistry.STATE_STALE:

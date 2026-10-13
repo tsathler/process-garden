@@ -16,6 +16,7 @@ var _http_request: HTTPRequest
 var _poll_timer: Timer
 var _request_active := false
 var _endpoint_is_valid := true
+var _polling_enabled := true
 
 
 func _ready() -> void:
@@ -49,8 +50,22 @@ func _exit_tree() -> void:
 		_request_active = false
 
 
+func set_polling_enabled(enabled: bool) -> void:
+	_polling_enabled = enabled
+	if _poll_timer == null:
+		return
+	if enabled:
+		_poll_timer.start()
+		_request_snapshot()
+	else:
+		_poll_timer.stop()
+		if _request_active:
+			_http_request.cancel_request()
+			_request_active = false
+
+
 func _request_snapshot() -> void:
-	if _request_active or not _endpoint_is_valid:
+	if not _polling_enabled or _request_active or not _endpoint_is_valid:
 		return
 	_request_active = true
 	var request_error := _http_request.request(
@@ -67,6 +82,8 @@ func _on_request_completed(
 	result: int, response_code: int, _headers: PackedStringArray, body: PackedByteArray
 ) -> void:
 	_request_active = false
+	if not _polling_enabled:
+		return
 	if result == HTTPRequest.RESULT_TIMEOUT:
 		request_failed.emit("timeout", "request_timeout")
 		return

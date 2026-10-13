@@ -1,6 +1,6 @@
 # Process Garden — Living System
 
-Process Garden turns live Windows processes into creatures in a bioluminescent pixel art ecosystem. The project is planned as a standalone Python collector and a Godot visualization connected through a local JSON interface.
+Process Garden turns live Windows processes into creatures in a bioluminescent pixel art ecosystem. A standalone Python collector and a Godot visualization communicate through a local JSON interface.
 
 ## Stack
 
@@ -8,9 +8,9 @@ Process Garden turns live Windows processes into creatures in a bioluminescent p
 - pytest and Ruff for validation
 - Godot 4 and GDScript for the local desktop client
 
-## Current implementation: E02.3 (validated on Windows)
+## Current implementation: E03.1 (Windows validation pending)
 
-The independent collector produces JSON-ready process snapshots. The read-only API serves the latest snapshot at `GET http://127.0.0.1:8765/v1/snapshot`; collection continues every two seconds even when there are no requests. The server binds only to loopback. The Godot client polls asynchronously, validates snapshots, and reconciles process identities. E02.1 adds a hand-drawn underground environment and reusable creature scene, with up to 60 process identities represented at once. E02.2 adds seeded wandering, breathing, CPU activity, RAM-based scale, and spawn/despawn fades. E02.3 separates visual float from navigation, applies soft pairwise spacing, and adds click selection with a compact process details panel. The controller counts fading nodes against the 60-node limit and reuses identities that return during despawn.
+The independent collector produces JSON-ready process snapshots. The read-only API serves the latest snapshot at `GET http://127.0.0.1:8765/v1/snapshot`; collection continues every two seconds even when there are no requests. The server binds only to loopback. The Godot client polls asynchronously, validates snapshots, and reconciles process identities. E02.1 adds a hand-drawn underground environment and reusable creature scene, with up to 60 process identities represented at once. E02.2 adds seeded wandering, breathing, CPU activity, RAM-based scale, and spawn/despawn fades. E02.3 separates visual float from navigation, applies soft pairwise spacing, and adds click selection with a compact process details panel. E03.1 adds an offline deterministic demo using the same registry, selector, and garden. The controller counts fading nodes against the 60-node limit and reuses identities that return during despawn.
 
 CPU is sampled without blocking. Its first value for each process identity is `null`; later values use psutil semantics, where 100% represents one fully used logical CPU and a multi-threaded process can exceed 100%.
 
@@ -76,11 +76,13 @@ Open `garden/project.godot` in Godot 4, or run it from a terminal:
 godot --path garden
 ```
 
+The client starts in **REAL** mode and connects to the local collector. Choose **DEMO** in the header to run without the collector or API. In demo mode, choose a scenario of 50, 150, 300, or 500 synthetic processes and set the seed; the same scenario and seed reproduce the same process identities and initial CPU/RAM values. The demo creates and ends processes while updating simulated metrics. Synthetic process names and the `DEMO · SIMULATED` status distinguish them from real process data. Switching between REAL and DEMO resets the process registry and clears old creatures before accepting snapshots from the selected source.
+
 The garden polls `http://127.0.0.1:8765/v1/snapshot` every two seconds. It accepts only loopback HTTP snapshot URLs, makes one request at a time, and preserves the last valid process registry and creatures during failures. Complete (`ok`) snapshots remove identities that disappeared; `partial` snapshots retain absent identities until a later complete snapshot. State changes to Stale after six seconds and Disconnected after fifteen seconds without a new sample, then recovers automatically.
 
 The selector ranks CPU activity in five percentage point bands, gives already represented identities preference within a band, then uses CPU, RSS memory, and `(pid, create_time)` for deterministic ordering. PID 0 remains in the registry, but its CPU value does not contribute to activity ranking or creature activity. The collector still reports every accessible process; the 60 limit applies to visible and transitioning creature nodes. CPU is smoothed and capped for visual behavior; RAM uses a bounded logarithmic scale. Pairwise spacing only nudges nearby creatures, and their wander destinations favor a seeded local territory. These are visual mappings, not additional system measurements.
 
-Run the Godot parser, registry, selector, garden controller, creature simulation, spacing, selection, and details-panel checks with the engine installed:
+Run the Godot parser, registry, selector, demo source, garden controller, creature simulation, spacing, selection, and details-panel checks with the engine installed:
 
 ```powershell
 godot --headless --editor --path garden --quit
@@ -92,10 +94,11 @@ For Windows validation when `C:\Projects\ProcessGarden` is a separate copy, firs
 ```powershell
 $source = (wsl.exe wslpath -w /home/sathler/projects/process-garden/garden).Trim()
 $target = 'C:\Projects\ProcessGarden'
-$stage = Join-Path $env:TEMP 'ProcessGarden-E02.3-review'
+$stage = Join-Path $env:TEMP 'ProcessGarden-E03.1-review'
 $files = @(
     'project.godot', 'scenes\main.tscn', 'scenes\environment.tscn', 'scenes\creature.tscn',
     'scripts\main.gd', 'scripts\environment.gd', 'scripts\creature.gd', 'scripts\creature_visual.gd',
+    'scripts\demo_snapshot_source.gd',
     'scripts\garden_controller.gd', 'scripts\process_selector.gd',
     'scripts\process_registry.gd', 'scripts\snapshot_client.gd', 'scripts\snapshot_parser.gd',
     'tests\run_tests.gd'
@@ -132,8 +135,10 @@ $godot = 'C:\tools\Godot\Godot_v4.7.2-stable_win64_console.exe'
 
 In the graphical Windows run, verify that clicking a creature opens its highlight and details, clicking another creature changes selection, clicking empty garden clears it, and the details close button works without selecting a creature behind the panel. Repeat after resizing the window to confirm canvas coordinate scaling.
 
+To validate E03.1, start the garden without the Python API, select DEMO, and confirm the header says `DEMO · SIMULATED`. Try all four population options and at least two seeds, observe a process appear and another disappear, then switch to REAL and back to DEMO. Confirm the tracked count and creatures reset at each source change and that no more than 60 creatures are represented.
+
 If the client shows Connecting and then Disconnected, check that the Windows API is running and that the endpoint is reachable at `http://127.0.0.1:8765/v1/snapshot`. The WSL/Linux API sees its own processes; use Windows Python to observe Windows processes. WSL and Windows must use separate uv environments.
 
 ## Next milestone
 
-E03.1: add a deterministic offline demo mode that uses the same process registry, selector, and garden as real snapshots.
+E03.2: validate stability and resource use with larger synthetic snapshots and prolonged runs.

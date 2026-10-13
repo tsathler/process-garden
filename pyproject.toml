@@ -1,0 +1,33 @@
+[project]
+name = "process-garden"
+version = "0.1.0"
+description = "A Windows process collector for the Process Garden desktop ecosystem"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "psutil>=7.0,<8",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3,<9",
+    "ruff>=0.11,<1",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["collector"]
+testpaths = ["collector/tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"

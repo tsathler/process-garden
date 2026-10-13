@@ -1,0 +1,198 @@
+import json
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+
+import process_garden.api as api_module
+from process_garden.api import MAX_RESPONSE_BYTES, CollectorAPI
+from process_garden.collector import ProcessRecord, Snapshot
+
+
+def make_snapshot(sequence=1, name="worker"):
+    return Snapshot(
+        schema_version=1,
+        sequence=sequence,
+        collected_at="2026-10-13T12:00:00+00:00",
+        interval_ms=50,
+        status="ok",
+        processes=[
+            ProcessRecord(
+                pid=123,
+                create_time=10.5,
+                name=name,
+                cpu_percent=None,
+                memory_rss_bytes=2048,
+            )
+        ],
+        skipped_count=0,
+    )
+
+
+class FakeCollector:
+    interval_seconds = 0.05
+
+    def __init__(self, fail_after_first=False):
+        self.calls = 0
+        self.updated = threading.Event()
+        self.fail_after_first = fail_after_first
+
+    def collect(self):
+        self.calls += 1
+        if self.calls == 1:
+            return make_snapshot()
+        if self.fail_after_first:
+            self.updated.set()
+            raise RuntimeError("simulated collection failure")
+        snapshot = make_snapshot(sequence=self.calls, name=f"worker-{self.calls}")
+        self.updated.set()
+        return snapshot
+
+
+def start_api(collector=None, snapshot=None):
+    if collector is None:
+        collector = FakeCollector()
+    if snapshot is not None:
+        collector = FakeCollector()
+        collector.collect = lambda: snapshot
+    api = CollectorAPI(collector, port=0)
+    thread = threading.Thread(target=api.serve_forever, daemon=True)
+    thread.start()
+    return api, thread, collector
+
+
+def request(url, method="GET", data=None):
+    req = urllib.request.Request(url, data=data, method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=2) as response:
+            return response.status, response.headers, response.read()
+    except urllib.error.HTTPError as exc:
+        return exc.code, exc.headers, exc.read()
+
+
+def stop_api(api, thread):
+    if thread.is_alive():
+        api.shutdown()
+        thread.join(timeout=2)
+    assert not thread.is_alive()
+
+
+def test_get_snapshot_returns_latest_json_on_loopback():
+    api, thread, _ = start_api()
+    try:
+        host, port = api.address
+        assert host == "127.0.0.1"
+
+        status, headers, body = request(f"http://{host}:{port}/v1/snapshot")
+
+        assert status == 200
+        assert headers["Content-Type"] == "application/json; charset=utf-8"
+        assert headers["Cache-Control"] == "no-store"
+        assert json.loads(body)["processes"][0]["pid"] == 123
+    finally:
+        stop_api(api, thread)
+
+
+def test_snapshot_refreshes_without_waiting_for_http_request():
+    collector = FakeCollector()
+    api, thread, _ = start_api(collector=collector)
+    try:
+        assert collector.updated.wait(timeout=1)
+        time.sleep(0.01)
+        host, port = api.address
+
+        status, _, body = request(f"http://{host}:{port}/v1/snapshot")
+
+        assert status == 200
+        payload = json.loads(body)
+        assert payload["sequence"] >= 2
+        assert payload["processes"][0]["name"].startswith("worker-")
+    finally:
+        stop_api(api, thread)
+
+
+def test_unavailable_route_and_write_methods_are_rejected():
+    api, thread, _ = start_api()
+    try:
+        host, port = api.address
+        base = f"http://{host}:{port}"
+
+        not_found, _, missing_body = request(f"{base}/other")
+        method_not_allowed, headers, error_body = request(
+            f"{base}/v1/snapshot", method="POST", data=b"{}"
+        )
+
+        assert not_found == 404
+        assert json.loads(missing_body) == {"error": "not_found"}
+        assert method_not_allowed == 405
+        assert headers["Allow"] == "GET"
+        assert json.loads(error_body) == {"error": "method_not_allowed"}
+    finally:
+        stop_api(api, thread)
+
+
+def test_request_rate_is_limited():
+    api, thread, _ = start_api()
+    try:
+        host, port = api.address
+        url = f"http://{host}:{port}/v1/snapshot"
+        assert request(url)[0] == 200
+
+        status, _, body = request(url)
+
+        assert status == 429
+        assert json.loads(body) == {"error": "rate_limit_exceeded"}
+    finally:
+        stop_api(api, thread)
+
+
+def test_oversized_snapshot_is_not_returned():
+    large = make_snapshot(name="x" * MAX_RESPONSE_BYTES)
+    api, thread, _ = start_api(snapshot=large)
+    try:
+        host, port = api.address
+
+        status, _, body = request(f"http://{host}:{port}/v1/snapshot")
+
+        assert status == 503
+        assert json.loads(body) == {"error": "snapshot_too_large"}
+    finally:
+        stop_api(api, thread)
+
+
+def test_failed_collection_keeps_last_valid_snapshot_and_stops_cleanly():
+    collector = FakeCollector(fail_after_first=True)
+    api, thread, _ = start_api(collector=collector)
+    try:
+        assert collector.updated.wait(timeout=1)
+        time.sleep(0.01)
+        host, port = api.address
+
+        status, _, body = request(f"http://{host}:{port}/v1/snapshot")
+
+        assert status == 200
+        assert json.loads(body)["sequence"] == 1
+    finally:
+        stop_api(api, thread)
+
+
+def test_api_cli_handles_keyboard_interrupt(monkeypatch, capsys):
+    class InterruptingAPI:
+        address = ("127.0.0.1", 8765)
+
+        def __init__(self, collector, port):
+            pass
+
+        def serve_forever(self):
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(api_module, "CollectorAPI", InterruptingAPI)
+    monkeypatch.setattr(sys, "argv", ["process-garden-api"])
+
+    api_module.main()
+
+    assert capsys.readouterr().out == (
+        "Process Garden API listening on http://127.0.0.1:8765/v1/snapshot\n"
+        "Process Garden API stopped\n"
+    )

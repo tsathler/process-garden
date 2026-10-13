@@ -26,9 +26,10 @@ A process identity is `(pid, create_time)`. A reused PID with a different creati
 
 Access denied, process exit, and zombie errors are handled per process and increase `skipped_count`; other processes remain available in the snapshot. No administrator privileges are required. The collector does not access process paths, arguments, users, or other unnecessary fields.
 
-## Decisions for E01.2
+## E01.2 HTTP API
 
-- Confirm whether consumers want CPU percentages above 100 or a normalized 0–100 value.
-- Confirm whether `status` should stay `ok`/`partial` or include a top-level collector failure state.
-- Agree on HTTP polling cadence and behavior when a consumer misses sequence numbers.
-- Confirm timestamp precision and whether `interval_ms` should represent configured or actual elapsed time.
+`GET /v1/snapshot` returns the latest snapshot as `application/json`. The server binds only to `127.0.0.1` on port `8765` by default. It collects once before serving, then refreshes on a background thread independently of requests. `interval_ms` reports the configured sampling interval; `collected_at` reports when that snapshot was collected.
+
+The API accepts no request body and no methods that modify data. It limits each snapshot response to 1 MiB, accepts at most eight concurrent requests, and rate-limits snapshot reads to ten per second. Errors use a small JSON object with an `error` code. An unexpectedly failed collection leaves the last valid snapshot available; consumers can inspect `collected_at` to determine its age.
+
+The selected `status` values are `ok` and `partial`; a collector-wide failure does not create a new snapshot or change the last valid one. CPU values retain psutil's above-100 semantics. Consumers should use `sequence` to detect skipped snapshots. Polling cadence and handling of sequence gaps remain client decisions for E01.3.

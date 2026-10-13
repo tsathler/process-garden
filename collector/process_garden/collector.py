@@ -139,8 +139,11 @@ def main() -> None:
     args = parser.parse_args()
     collector = ProcessCollector(args.interval)
     snapshots = [collector.collect()] if args.once else collector.run()
-    for snapshot in snapshots:
-        print(snapshot.to_json(), flush=True)
+    try:
+        for snapshot in snapshots:
+            print(snapshot.to_json(), flush=True)
+    except KeyboardInterrupt:
+        return
 
 
 if __name__ == "__main__":

@@ -8,9 +8,9 @@ Process Garden turns live Windows processes into creatures in a bioluminescent p
 - pytest and Ruff for validation
 - Godot 4 is planned for the visualization
 
-## Current state: E01.1
+## Current state: E01.2
 
-The independent collector produces JSON-ready process snapshots. It reads PID, process creation time, name, CPU percentage, and resident memory only. It does not start a server or communicate with Godot yet.
+The independent collector produces JSON-ready process snapshots. The read-only API serves the latest snapshot at `GET http://127.0.0.1:8765/v1/snapshot`; collection continues every two seconds even when there are no requests. The server binds only to loopback.
 
 CPU is sampled without blocking. Its first value for each process identity is `null`; later values use psutil semantics, where 100% represents one fully used logical CPU and a multi-threaded process can exceed 100%.
 
@@ -22,21 +22,34 @@ Use Python 3.14 and uv:
 uv sync --locked
 ```
 
+Keep WSL and Windows environments separate. In PowerShell, set the project environment before syncing so it is outside the repository:
+
+```powershell
+$env:UV_PROJECT_ENVIRONMENT = "$env:LOCALAPPDATA\ProcessGarden\venv"
+uv sync --locked
+```
+
 ## Run a real collection demo
 
-From the repository root, run once:
+From the repository root, run one real snapshot as JSON:
 
 ```sh
 uv run --project . --directory collector python -m process_garden.collector --once
 ```
 
-Or print snapshots every two seconds until interrupted:
+Start the local HTTP API:
 
 ```sh
-uv run --project . --directory collector python -m process_garden.collector
+uv run --project . --directory collector python -m process_garden.api
 ```
 
-Set another interval with `--interval 1.5`. The collector needs no administrator privileges. Run these commands directly on Windows to validate Windows process collection; a WSL run observes Linux processes.
+Fetch the current snapshot with a browser, `curl http://127.0.0.1:8765/v1/snapshot`, or another local client. The API supports `--port` and `--interval`; for example:
+
+```sh
+uv run --project . --directory collector python -m process_garden.api --port 8766 --interval 1.5
+```
+
+Stop it with Ctrl+C. It requires no administrator privileges. Run from Windows to collect Windows processes; a WSL run observes Linux processes.
 
 ## Validate
 
@@ -46,9 +59,8 @@ uv run ruff format --check .
 uv run pytest
 ```
 
-Unit tests use fake processes and do not depend on Windows or the local process list.
+Unit tests use fake processes and local HTTP requests. They do not depend on Windows or the local process list.
 
 ## Next steps
 
-- E01.2: define and implement the local HTTP API for delivering snapshots.
-- Later: connect the API to a Godot 4 visualization.
+- E01.3: connect the API to a Godot 4 client and validate incoming snapshots.

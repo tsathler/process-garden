@@ -1,5 +1,7 @@
 import json
+import sys
 
+import process_garden.collector as collector_module
 from process_garden.collector import ProcessCollector
 
 
@@ -154,3 +156,20 @@ def test_skipped_process_count_with_partial_success():
     assert len(snapshot.processes) == 1
     assert snapshot.skipped_count == 1
     assert snapshot.status == "partial"
+
+
+def test_collector_cli_handles_keyboard_interrupt(monkeypatch, capsys):
+    class InterruptingCollector:
+        def __init__(self, interval_seconds):
+            pass
+
+        def run(self):
+            yield type("JsonValue", (), {"to_json": lambda self: "{}"})()
+            raise KeyboardInterrupt
+
+    monkeypatch.setattr(collector_module, "ProcessCollector", InterruptingCollector)
+    monkeypatch.setattr(sys, "argv", ["process-garden-collector"])
+
+    collector_module.main()
+
+    assert capsys.readouterr().out == "{}\n"

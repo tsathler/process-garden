@@ -22,6 +22,8 @@ var _separation_creatures: Array[ProcessCreature] = []
 var _separation_forces: Array[Vector2] = []
 var _selected_identity := ""
 var _is_reconciling := false
+var profiling_enabled := false
+var _last_profile_usec: Dictionary = {}
 
 
 func _ready() -> void:
@@ -35,9 +37,14 @@ func _process(delta: float) -> void:
 
 
 func reconcile_processes(processes: Array[Dictionary]) -> void:
+	if profiling_enabled:
+		_last_profile_usec.clear()
+	var copy_start_usec := Time.get_ticks_usec() if profiling_enabled else 0
 	_latest_processes.clear()
 	for process in processes:
 		_latest_processes.append(process.duplicate(true))
+	if profiling_enabled:
+		_last_profile_usec["process_copy_usec"] = Time.get_ticks_usec() - copy_start_usec
 	_reconcile_latest()
 
 
@@ -64,6 +71,10 @@ func get_selected_identity() -> String:
 
 func get_selected_creature() -> ProcessCreature:
 	return get_creature(_selected_identity) if not _selected_identity.is_empty() else null
+
+
+func get_last_profile_usec() -> Dictionary:
+	return _last_profile_usec.duplicate()
 
 
 func clear_for_source_change() -> void:
@@ -181,9 +192,13 @@ func _reconcile_latest() -> void:
 		return
 	_is_reconciling = true
 	var selected_identities := _creatures.keys()
+	var selector_start_usec := Time.get_ticks_usec() if profiling_enabled else 0
 	var selected := _selector.select_processes(
 		_latest_processes, selected_identities, mini(creature_limit, 60)
 	)
+	if profiling_enabled:
+		_last_profile_usec["selector_usec"] = Time.get_ticks_usec() - selector_start_usec
+	var creature_reconcile_start_usec := Time.get_ticks_usec() if profiling_enabled else 0
 	var desired: Dictionary = {}
 	for process in selected:
 		var identity := SnapshotParserScript.identity_key(process)
@@ -218,6 +233,10 @@ func _reconcile_latest() -> void:
 		creature.set_process_record(process, identity)
 		occupied_positions.append(creature.position)
 
+	if profiling_enabled:
+		_last_profile_usec["creature_reconcile_usec"] = (
+			Time.get_ticks_usec() - creature_reconcile_start_usec
+		)
 	_is_reconciling = false
 	representation_changed.emit(_creatures.size())
 

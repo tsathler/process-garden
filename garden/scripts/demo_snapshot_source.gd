@@ -13,6 +13,7 @@ const MAX_MEMORY_BYTES := 2_147_483_648
 
 var population_size := 150
 var seed_value := 2025
+var profiling_enabled := false
 var _timer: Timer
 var _random := RandomNumberGenerator.new()
 var _processes: Array[Dictionary] = []
@@ -24,6 +25,7 @@ var _sequence := 0
 var _tick := 0
 var _last_collected_unix := 0.0
 var _is_running := false
+var _last_profile_usec: Dictionary = {}
 
 
 func _ready() -> void:
@@ -56,17 +58,32 @@ func stop() -> void:
 func advance_one_step() -> void:
 	if not _is_running:
 		return
+	var total_start_usec := Time.get_ticks_usec() if profiling_enabled else 0
+	if profiling_enabled:
+		_last_profile_usec.clear()
+	var stage_start_usec := Time.get_ticks_usec() if profiling_enabled else 0
 	_tick += 1
 	_update_metrics()
+	if profiling_enabled:
+		_last_profile_usec["metric_update_usec"] = Time.get_ticks_usec() - stage_start_usec
+	stage_start_usec = Time.get_ticks_usec() if profiling_enabled else 0
 	if _tick % 4 == 1:
 		_spawn_process()
 	elif _tick % 4 == 3:
 		_end_process()
+	if profiling_enabled:
+		_last_profile_usec["lifecycle_update_usec"] = Time.get_ticks_usec() - stage_start_usec
 	_emit_snapshot()
+	if profiling_enabled:
+		_last_profile_usec["advance_total_usec"] = Time.get_ticks_usec() - total_start_usec
 
 
 func get_population_size() -> int:
 	return _processes.size()
+
+
+func get_last_profile_usec() -> Dictionary:
+	return _last_profile_usec.duplicate()
 
 
 func _ensure_timer() -> void:
@@ -152,16 +169,24 @@ func _emit_snapshot() -> void:
 	_sequence += 1
 	var now := Time.get_unix_time_from_system()
 	_last_collected_unix = maxf(now, _last_collected_unix + 0.000001)
+	var copy_start_usec := Time.get_ticks_usec() if profiling_enabled else 0
+	var process_copy: Array[Dictionary] = _processes.duplicate(true)
 	var snapshot := {
 		"schema_version": 1,
 		"sequence": _sequence,
 		"collected_at": _utc_timestamp(_last_collected_unix),
 		"interval_ms": int(round(interval_seconds * 1000.0)),
 		"status": "ok",
-		"processes": _processes.duplicate(true),
+		"processes": process_copy,
 		"skipped_count": 0,
 	}
+	if profiling_enabled:
+		_last_profile_usec["snapshot_copy_usec"] = Time.get_ticks_usec() - copy_start_usec
+	var validation_start_usec := Time.get_ticks_usec() if profiling_enabled else 0
 	var validated: Dictionary = SnapshotParserScript.validate_data(snapshot)
+	if profiling_enabled:
+		_last_profile_usec["contract_validation_usec"] = Time.get_ticks_usec() - validation_start_usec
+		_last_profile_usec["contract_valid"] = bool(validated["ok"])
 	if validated["ok"]:
 		snapshot_generated.emit(validated["snapshot"])
 

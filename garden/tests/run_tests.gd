@@ -804,6 +804,21 @@ func _test_demo_mode_switching() -> void:
 		or creature_after_source_change.process_name == real_process["name"],
 		"same PID and create_time cannot retain a demo creature across sources"
 	)
+	main.call("_on_request_failed", "transport", "benchmark_disconnect_fixture")
+	var disconnected_registry: ProcessRegistry = main.get("_registry")
+	_check(
+		disconnected_registry.get_tracked_count() == 1 and garden.get_creature_count() == 1,
+		"API loss preserves the last valid registry and creature"
+	)
+	var recovered := Parser.validate_data(
+		_snapshot(2, Time.get_unix_time_from_system(), "ok", [real_process])
+	)
+	main.call("_on_snapshot_received", recovered["snapshot"])
+	_check(
+		disconnected_registry.connection_state == ProcessRegistry.STATE_CONNECTED
+		and garden.get_creature_count() == 1,
+		"a fresh API sample recovers without duplicating the creature"
+	)
 	mode_option.select(1)
 	mode_option.item_selected.emit(1)
 	var switched_back_registry: ProcessRegistry = main.get("_registry")
@@ -811,6 +826,26 @@ func _test_demo_mode_switching() -> void:
 		switched_back_registry.get_tracked_count() == 150,
 		"switching back to demo starts a fresh deterministic source"
 	)
+	var maximum_creatures := garden.get_creature_count()
+	for cycle in range(20):
+		mode_option.select(0)
+		mode_option.item_selected.emit(0)
+		await process_frame
+		var cleared_registry: ProcessRegistry = main.get("_registry")
+		_check(
+			cleared_registry.get_tracked_count() == 0 and garden.get_creature_count() == 0,
+			"source switch %d clears prior process identities" % cycle
+		)
+		mode_option.select(1)
+		mode_option.item_selected.emit(1)
+		await process_frame
+		var active_registry: ProcessRegistry = main.get("_registry")
+		maximum_creatures = maxi(maximum_creatures, garden.get_creature_count())
+		_check(
+			active_registry.get_tracked_count() == 150 and garden.get_creature_count() <= 60,
+			"source switch %d restores demo within the creature limit" % cycle
+		)
+	_check(maximum_creatures <= 60, "repeated source changes never exceed the creature limit")
 	mode_option.select(0)
 	mode_option.item_selected.emit(0)
 	main.queue_free()
@@ -897,15 +932,17 @@ func _test_repeat_and_partial_preserve_processes() -> void:
 
 func _test_restart_and_freshness() -> void:
 	var registry := Registry.new(6.0, 15.0)
-	var first := _validated(_snapshot(8, 3000.0, "ok", []))
+	var first := _validated(_snapshot(8, 3000.0, "ok", [_proc(28, 5.0, 2.0)]))
 	registry.accept_snapshot(first, 3001.0, 1000)
-	var restarted := _validated(_snapshot(1, 3002.0, "ok", []))
+	var restarted := _validated(_snapshot(1, 3002.0, "ok", [_proc(28, 5.0, 2.0)]))
 	var restart_result := registry.accept_snapshot(restarted, 3003.0, 3000)
 	_check(restart_result["accepted"] and restart_result["restarted"], "sequence reset with newer time detects restart")
 	registry.update_connection_state(3009.0, 9000)
 	_check(registry.connection_state == Registry.STATE_STALE, "freshness becomes stale")
+	_check(registry.get_tracked_count() == 1, "stale data remains in the process registry")
 	registry.update_connection_state(3018.0, 18000)
 	_check(registry.connection_state == Registry.STATE_DISCONNECTED, "freshness becomes disconnected")
+	_check(registry.get_tracked_count() == 1, "disconnection does not remove the last process snapshot")
 
 
 func _snapshot(sequence: int, collected_unix: float, status: String, processes: Array) -> Dictionary:

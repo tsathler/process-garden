@@ -8,7 +8,7 @@ Process Garden turns live Windows processes into creatures in a bioluminescent p
 - pytest and Ruff for validation
 - Godot 4 and GDScript for the local desktop client
 
-## Current implementation: E03.1 (Windows validation pending)
+## Current implementation: E03.2 (real API reconnection check pending)
 
 The independent collector produces JSON-ready process snapshots. The read-only API serves the latest snapshot at `GET http://127.0.0.1:8765/v1/snapshot`; collection continues every two seconds even when there are no requests. The server binds only to loopback. The Godot client polls asynchronously, validates snapshots, and reconciles process identities. E02.1 adds a hand-drawn underground environment and reusable creature scene, with up to 60 process identities represented at once. E02.2 adds seeded wandering, breathing, CPU activity, RAM-based scale, and spawn/despawn fades. E02.3 separates visual float from navigation, applies soft pairwise spacing, and adds click selection with a compact process details panel. E03.1 adds an offline deterministic demo using the same registry, selector, and garden. The controller counts fading nodes against the 60-node limit and reuses identities that return during despawn.
 
@@ -80,6 +80,8 @@ The client starts in **REAL** mode and connects to the local collector. Choose *
 
 The garden polls `http://127.0.0.1:8765/v1/snapshot` every two seconds. It accepts only loopback HTTP snapshot URLs, makes one request at a time, and preserves the last valid process registry and creatures during failures. Complete (`ok`) snapshots remove identities that disappeared; `partial` snapshots retain absent identities until a later complete snapshot. State changes to Stale after six seconds and Disconnected after fifteen seconds without a new sample, then recovers automatically.
 
+E03.2 adds a standalone Godot benchmark runner and repeated source-switch/disconnection regression checks. Godot 4.7.2 on Windows passed 702 GDScript tests. A 300-second-per-scenario soak measured average FPS of 60.00, 59.08, 57.43, and 54.39 for 50, 150, 300, and 500 processes. It recorded zero invalid snapshots, zero orphan nodes, and respected the 60-creature cap. The 500-process case had an isolated 385.62 ms frame peak. Static memory increased by about 4.2–4.4 MiB per scenario; start/end values alone do not establish a leak or a stable plateau. DEMO generation, JSON parsing/validation, selection, and creature reconciliation were instrumented. The synthetic JSON round trip adds work that normal DEMO mode does not perform, so those timings do not exactly represent ordinary DEMO use. E03.2 is awaiting confirmation of a manual real API stop/restart and garden reconnection. Details and limitations are in [docs/e03.2-benchmark.md](docs/e03.2-benchmark.md).
+
 The selector ranks CPU activity in five percentage point bands, gives already represented identities preference within a band, then uses CPU, RSS memory, and `(pid, create_time)` for deterministic ordering. PID 0 remains in the registry, but its CPU value does not contribute to activity ranking or creature activity. The collector still reports every accessible process; the 60 limit applies to visible and transitioning creature nodes. CPU is smoothed and capped for visual behavior; RAM uses a bounded logarithmic scale. Pairwise spacing only nudges nearby creatures, and their wander destinations favor a seeded local territory. These are visual mappings, not additional system measurements.
 
 Run the Godot parser, registry, selector, demo source, garden controller, creature simulation, spacing, selection, and details-panel checks with the engine installed:
@@ -141,4 +143,4 @@ If the client shows Connecting and then Disconnected, check that the Windows API
 
 ## Next milestone
 
-E03.2: validate stability and resource use with larger synthetic snapshots and prolonged runs.
+E03.2: record the manual real API interruption/reconnection result before closing the stability milestone.

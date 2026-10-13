@@ -17,11 +17,19 @@ uv run ruff format --check .
 uv run pytest
 ```
 
+On Windows with Godot 4.7.2, validate the garden with:
+
+```powershell
+godot --headless --editor --path garden --quit
+godot --headless --path garden --script res://tests/run_tests.gd
+godot --path garden
+```
+
 ## Architecture boundaries
 
 - `collector/` owns process sampling, snapshot production, and the loopback-only HTTP API.
-- `garden/` is reserved for a future Godot project.
-- Do not add persistence, UI, or packaging to E01.2.
+- `garden/` contains the Godot client and visual garden; keep HTTP and contract parsing in their existing scripts, and use `ProcessRegistry` as the process identity source.
+- Do not add persistence or packaging during E01 milestones.
 - Keep dependencies limited to psutil at runtime and pytest/Ruff for development.
 
 ## Safety and privacy

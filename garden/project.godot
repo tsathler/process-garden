@@ -1,0 +1,26 @@
+; Engine configuration file.
+; Process Garden — Living System.
+
+config_version=5
+
+[application]
+
+config/name="Process Garden — Living System"
+run/main_scene="res://scenes/main.tscn"
+run/max_fps=60
+config/features=PackedStringArray("4.7", "GL Compatibility")
+
+[display]
+
+window/size/viewport_width=640
+window/size/viewport_height=360
+window/size/window_width_override=960
+window/size/window_height_override=540
+window/stretch/mode="canvas_items"
+window/stretch/aspect="keep"
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+textures/default_filters/use_nearest_mipmap_filter=false

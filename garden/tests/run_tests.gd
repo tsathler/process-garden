@@ -3,9 +3,11 @@ extends SceneTree
 const Parser = preload("res://scripts/snapshot_parser.gd")
 const Registry = preload("res://scripts/process_registry.gd")
 const Selector = preload("res://scripts/process_selector.gd")
+const CreatureVisualScript = preload("res://scripts/creature_visual.gd")
 const GardenControllerScript = preload("res://scripts/garden_controller.gd")
 const DemoSnapshotSourceScript = preload("res://scripts/demo_snapshot_source.gd")
 const CreatureScene: PackedScene = preload("res://scenes/creature.tscn")
+const EnvironmentScene: PackedScene = preload("res://scenes/environment.tscn")
 const MainScene: PackedScene = preload("res://scenes/main.tscn")
 
 var _passed := 0
@@ -23,6 +25,8 @@ func _run() -> void:
 	_test_duplicate_identity_and_negative_metric()
 	_test_pid_zero_regression()
 	_test_process_selection()
+	await _test_species_identity_mapping()
+	await _test_environment_ambience()
 	await _test_garden_controller_reconciliation()
 	await _test_creature_behavior_and_lifecycle()
 	await _test_despawn_reuse_and_capacity()
@@ -110,6 +114,126 @@ func _test_pid_zero_regression() -> void:
 	var string_pid := _snapshot(1, 1000.0, "ok", [_proc(0, 1234.5, null)])
 	string_pid["processes"][0]["pid"] = "0"
 	_check(not Parser.validate_data(string_pid)["ok"], "text PID rejected")
+
+
+func _test_species_identity_mapping() -> void:
+	var observed_species: Dictionary = {}
+	var stable := true
+	for pid in range(1, 129):
+		var record := _proc(pid, 1700.0 + float(pid), 0.0)
+		var identity := Parser.identity_key(record)
+		var first_species: int = CreatureVisualScript.species_for_identity(identity)
+		var repeated_species: int = CreatureVisualScript.species_for_identity(identity)
+		stable = stable and first_species == repeated_species
+		observed_species[first_species] = true
+	_check(stable, "species mapping remains stable for a complete process identity")
+	_check(observed_species.size() == 4, "stable identity mapping distributes across all four species")
+
+	var reused_pid_first := Parser.identity_key(_proc(77, 1777.0, 0.0))
+	var reused_pid_second := Parser.identity_key(_proc(77, 2777.0, 0.0))
+	_check(reused_pid_first != reused_pid_second, "species input identity distinguishes reused PIDs")
+	_check(
+		CreatureVisualScript.species_for_identity(reused_pid_first)
+		!= CreatureVisualScript.species_for_identity(reused_pid_second),
+		"create_time participates in visual species mapping after PID reuse"
+	)
+
+	var creature := CreatureScene.instantiate() as ProcessCreature
+	root.add_child(creature)
+	var first_record := _proc(77, 1777.0, 4.0, 8_388_608)
+	creature.set_process_record(first_record, reused_pid_first)
+	var first_species := creature.species
+	_check(
+		creature._visual.species == first_species,
+		"creature visual receives the species assigned to its process identity"
+	)
+	var updated_record := _proc(77, 1777.0, 35.0, 64_000_000)
+	creature.set_process_record(updated_record, reused_pid_first)
+	_check(creature.species == first_species, "metric updates preserve a persistent identity's species")
+	creature.set_process_record(_proc(77, 2777.0, 1.0), reused_pid_second)
+	_check(
+		creature.species == CreatureVisualScript.species_for_identity(reused_pid_second),
+		"reused PID receives the species mapped from its new create_time identity"
+	)
+	creature.queue_free()
+	await process_frame
+
+
+func _test_environment_ambience() -> void:
+	var first_node: Node = EnvironmentScene.instantiate()
+	var second_node: Node = EnvironmentScene.instantiate()
+	var main_node: Node = MainScene.instantiate()
+	if not is_instance_valid(first_node) or not is_instance_valid(second_node):
+		_check(false, "environment scene fixtures instantiate before ambience checks")
+		_release_test_node(first_node)
+		_release_test_node(second_node)
+		_release_test_node(main_node)
+		return
+	var first := first_node as CaveEnvironment
+	var second := second_node as CaveEnvironment
+	var main_scene := main_node as Control
+	if not is_instance_valid(first) or not is_instance_valid(second) or not is_instance_valid(main_scene):
+		_check(false, "environment fixtures have the expected node types")
+		_release_test_node(first_node)
+		_release_test_node(second_node)
+		_release_test_node(main_node)
+		return
+	var scene_environment := main_scene.get_node_or_null("Garden/Environment") as Node2D
+	var creature_layer := main_scene.get_node_or_null("Garden/Creatures") as Node2D
+	if not is_instance_valid(scene_environment) or not is_instance_valid(creature_layer):
+		_check(false, "main scene exposes environment and creature layers")
+		_release_test_node(first_node)
+		_release_test_node(second_node)
+		_release_test_node(main_node)
+		return
+	root.add_child(first)
+	root.add_child(second)
+	await process_frame
+	_check(
+		scene_environment.get_index() < creature_layer.get_index(),
+		"environment remains behind the selectable creature layer"
+	)
+	_check(first.get_ambient_particle_count() == 18, "environment uses a bounded fixed ambient particle count")
+	_check(first.get_ambient_particle_count() <= 24, "ambient decoration remains below its configured cap")
+	_check(first.get_child_count() == 0, "ambient particles do not create interactive scene nodes")
+	var first_positions := first.get_ambient_particle_positions()
+	var second_positions := second.get_ambient_particle_positions()
+	_check(first_positions == second_positions, "ambient particle placement is deterministic")
+	var in_field := true
+	for particle_position in first_positions:
+		in_field = in_field and Rect2(Vector2.ZERO, Vector2(640, 360)).has_point(particle_position)
+	_check(in_field, "ambient particles remain within the logical garden bounds")
+	var painter_order := first.get_painter_order()
+	_check(
+		painter_order.find("distant_rock") < painter_order.find("midground")
+		and painter_order.find("midground") < painter_order.find("ground")
+		and painter_order.find("ground") < painter_order.find("foreground_edges")
+		and painter_order.find("foreground_edges") < painter_order.find("ambient"),
+		"environment draws distant, middle, ground, edge, and ambient planes in order"
+	)
+	first.advance_ambience(0.25)
+	second.advance_ambience(0.25)
+	_check(
+		first.get_ambient_particle_positions() == second.get_ambient_particle_positions(),
+		"equal ambience time preserves deterministic particle motion"
+	)
+	_check(
+		first.get_ambient_particle_positions() != first_positions,
+		"ambient particles drift independently of process identities"
+	)
+	_release_test_node(first)
+	_release_test_node(second)
+	_release_test_node(main_scene)
+	await process_frame
+
+
+func _release_test_node(node: Node) -> void:
+	if not is_instance_valid(node):
+		return
+	if node.is_inside_tree():
+		node.queue_free()
+	else:
+		node.free()
 
 
 func _test_process_selection() -> void:
@@ -438,15 +562,16 @@ func _test_separation_and_click_selection() -> void:
 	_check(not first.is_selected and second.is_selected, "highlight moves to the new selection")
 	_check(controller.select_at(Vector2.ZERO).is_empty(), "empty-space click clears selection")
 
-	first._visual.position = Vector2(0.0, 2.0)
+	first._visual.position = Vector2.ZERO
 	first._visual.scale = Vector2.ONE
+	var scale_test_point := _scale_test_point(first.species)
 	_check(
-		not first.contains_local_point(Vector2(14.0, 2.0)),
+		not first.contains_local_point(scale_test_point),
 		"base-scale click area excludes points beyond the body"
 	)
 	first._visual.scale = Vector2(1.35, 1.35)
 	_check(
-		first.contains_local_point(Vector2(14.0, 2.0)),
+		first.contains_local_point(scale_test_point),
 		"larger visual scale expands the click area"
 	)
 	first._visual.scale = Vector2.ONE
@@ -468,6 +593,19 @@ func _test_separation_and_click_selection() -> void:
 	)
 	controller.queue_free()
 	await process_frame
+
+
+func _scale_test_point(species: int) -> Vector2:
+	match species:
+		CreatureVisualScript.Species.WISP:
+			return Vector2(12.0, 0.0)
+		CreatureVisualScript.Species.BEETLE:
+			return Vector2(18.0, 0.0)
+		CreatureVisualScript.Species.SPORE:
+			return Vector2(17.0, -6.0)
+		CreatureVisualScript.Species.CRYSTAL:
+			return Vector2(15.0, 0.0)
+	return Vector2(1000.0, 1000.0)
 
 
 func _test_click_routing_and_process_details() -> void:

@@ -5,12 +5,6 @@ enum State { SPAWNING, IDLE, WANDERING, ACTIVE, DESPAWNING }
 
 signal despawn_finished(identity: String, creature: ProcessCreature)
 
-const BODY_PALETTE := [
-	Color("#55d5c2"),
-	Color("#60a8df"),
-	Color("#9b88d8"),
-	Color("#54c99a"),
-]
 const SPAWN_DURATION_SECONDS := 0.42
 const DESPAWN_DURATION_SECONDS := 0.42
 const ACTIVITY_THRESHOLD := 0.28
@@ -23,11 +17,11 @@ var process_name := ""
 var process_pid := 0
 var cpu_percent: Variant = null
 var memory_rss_bytes := 0
+var species: int = CreatureVisual.Species.WISP
 var state := State.SPAWNING
 var movement_bounds := Rect2(Vector2(20.0, 88.0), Vector2(600.0, 224.0))
 var is_selected := false
 
-var _body_color := BODY_PALETTE[0]
 var _visual: CreatureVisual
 var _random := RandomNumberGenerator.new()
 var _base_speed := 10.0
@@ -41,6 +35,7 @@ var _breath_phase := 0.0
 var _float_frequency := 1.1
 var _float_phase := 0.0
 var _float_offset := 0.0
+var _float_amplitude := 1.8
 var _activity_level := 0.0
 var _target_activity := 0.0
 var _ram_scale := MIN_RAM_SCALE
@@ -57,6 +52,7 @@ var _animation_generation := 0
 
 func _ready() -> void:
 	_visual = get_node("Visual") as CreatureVisual
+	_visual.set_species(species)
 	_refresh_visuals()
 
 
@@ -111,12 +107,15 @@ func get_territory_radius() -> float:
 	return _territory_radius
 
 
+func get_species_name() -> String:
+	return str(CreatureVisual.Species.keys()[species])
+
+
 func contains_local_point(local_point: Vector2) -> bool:
 	if state == State.DESPAWNING or _visual == null:
 		return false
 	var body_point := _visual.transform.affine_inverse() * local_point
-	var normalized := Vector2(body_point.x / 12.0, body_point.y / 14.0)
-	return normalized.length_squared() <= 1.0
+	return _visual.contains_body_point(body_point)
 
 
 func set_process_record(record: Dictionary, identity: String) -> void:
@@ -129,9 +128,6 @@ func set_process_record(record: Dictionary, identity: String) -> void:
 	memory_rss_bytes = maxi(int(record["memory_rss_bytes"]), 0)
 	_target_activity = _activity_from_cpu(cpu_percent, process_pid)
 	_target_ram_scale = _scale_for_memory(memory_rss_bytes)
-	_body_color = BODY_PALETTE[posmod(hash(identity), BODY_PALETTE.size())]
-	if _visual != null:
-		_visual.set_body_color(_body_color)
 
 
 func advance_simulation(delta: float) -> void:
@@ -139,7 +135,7 @@ func advance_simulation(delta: float) -> void:
 		return
 	_breath_phase = fposmod(_breath_phase + delta * _breath_frequency, TAU)
 	_float_phase = fposmod(_float_phase + delta * _float_frequency, TAU)
-	_float_offset = sin(_float_phase) * 1.8
+	_float_offset = sin(_float_phase) * _float_amplitude
 	var smoothing := 1.0 - exp(-delta / 0.75)
 	_activity_level = lerpf(_activity_level, _target_activity, smoothing)
 	_ram_scale = move_toward(_ram_scale, _target_ram_scale, delta * 0.8)
@@ -210,6 +206,9 @@ func _reset_for_identity(identity: String) -> void:
 	_animation_generation += 1
 	process_identity = identity
 	_random.seed = posmod(hash(identity), 2_147_483_646) + 1
+	species = CreatureVisual.species_for_identity(identity)
+	if _visual != null:
+		_visual.set_species(species)
 	_base_speed = _random.randf_range(8.0, 13.0)
 	_pause_min = _random.randf_range(0.65, 1.0)
 	_pause_max = _pause_min + _random.randf_range(0.65, 1.2)
@@ -218,8 +217,9 @@ func _reset_for_identity(identity: String) -> void:
 	_breath_frequency = _random.randf_range(1.65, 2.45)
 	_breath_phase = _random.randf_range(0.0, TAU)
 	_float_frequency = _random.randf_range(0.75, 1.45)
+	_float_amplitude = _float_amplitude_for_species(species)
 	_float_phase = _random.randf_range(0.0, TAU)
-	_float_offset = sin(_float_phase) * 1.8
+	_float_offset = sin(_float_phase) * _float_amplitude
 	_activity_level = 0.0
 	_target_activity = 0.0
 	_ram_scale = MIN_RAM_SCALE
@@ -283,7 +283,9 @@ func _update_behavior(delta: float) -> void:
 	if process_pid != 0 and _activity_level >= ACTIVITY_THRESHOLD:
 		state = State.ACTIVE
 		if _is_moving:
-			if _move_toward_destination(delta, 1.0 + _activity_level * 0.65):
+			if _move_toward_destination(
+				delta, _species_speed_factor() * (1.0 + _activity_level * 0.65)
+			):
 				_is_moving = false
 				_pause_remaining = _next_pause()
 		else:
@@ -304,7 +306,7 @@ func _update_behavior(delta: float) -> void:
 			_choose_destination()
 			_is_moving = true
 	elif state == State.WANDERING:
-		if _move_toward_destination(delta, 1.0):
+		if _move_toward_destination(delta, _species_speed_factor()):
 			state = State.IDLE
 			_is_moving = false
 			_pause_remaining = _next_pause()
@@ -353,7 +355,46 @@ func _choose_destination() -> void:
 
 func _next_pause() -> float:
 	var activity_shortening := 1.0 - _activity_level * 0.5
-	return _random.randf_range(_pause_min, _pause_max) * activity_shortening
+	return (
+		_random.randf_range(_pause_min, _pause_max)
+		* activity_shortening
+		* _species_pause_factor()
+	)
+
+
+func _species_speed_factor() -> float:
+	match species:
+		CreatureVisual.Species.BEETLE:
+			return 1.16
+		CreatureVisual.Species.SPORE:
+			return 0.9
+		CreatureVisual.Species.CRYSTAL:
+			return 0.78
+	return 1.0
+
+
+func _species_pause_factor() -> float:
+	match species:
+		CreatureVisual.Species.BEETLE:
+			return 0.82
+		CreatureVisual.Species.SPORE:
+			return 1.18
+		CreatureVisual.Species.CRYSTAL:
+			return 1.24
+	return 1.0
+
+
+func _float_amplitude_for_species(value: int) -> float:
+	match value:
+		CreatureVisual.Species.WISP:
+			return 2.25
+		CreatureVisual.Species.BEETLE:
+			return 1.15
+		CreatureVisual.Species.SPORE:
+			return 1.65
+		CreatureVisual.Species.CRYSTAL:
+			return 0.9
+	return 1.8
 
 
 func _clamp_position(value: Vector2) -> Vector2:
@@ -385,17 +426,50 @@ func _refresh_visuals() -> void:
 	if _visual == null:
 		return
 	var breath := sin(_breath_phase)
-	var horizontal_breath := 1.0 + breath * 0.018
-	var vertical_breath := 1.0 - breath * 0.025
+	var breath_strength := _species_breath_strength()
+	var horizontal_breath := 1.0 + breath * 0.018 * breath_strength
+	var vertical_breath := 1.0 - breath * 0.025 * breath_strength
 	var lifecycle_scale := lerpf(0.18, 1.0, _transition_progress)
 	_visual.position = Vector2(0.0, _float_offset)
+	_visual.rotation = _species_rotation()
 	_visual.scale = Vector2(
 		_ram_scale * horizontal_breath * lifecycle_scale,
 		_ram_scale * vertical_breath * lifecycle_scale
 	)
-	var brightness := 0.94 + (breath + 1.0) * 0.035 + _activity_level * 0.08
+	var glow_wave := sin(_breath_phase * _species_glow_frequency())
+	var brightness := 0.94 + (glow_wave + 1.0) * _species_glow_strength() + _activity_level * 0.08
 	_visual.self_modulate = Color(brightness, brightness, brightness, _transition_progress)
 	_set_selection_visual(is_selected)
+
+
+func _species_breath_strength() -> float:
+	match species:
+		CreatureVisual.Species.BEETLE:
+			return 0.72
+		CreatureVisual.Species.SPORE:
+			return 1.35
+		CreatureVisual.Species.CRYSTAL:
+			return 0.48
+	return 0.9
+
+
+func _species_glow_frequency() -> float:
+	return 0.55 if species == CreatureVisual.Species.CRYSTAL else 1.0
+
+
+func _species_glow_strength() -> float:
+	return 0.055 if species == CreatureVisual.Species.CRYSTAL else 0.035
+
+
+func _species_rotation() -> float:
+	match species:
+		CreatureVisual.Species.BEETLE:
+			return sin(_breath_phase * 2.6) * 0.045 * (0.6 + _activity_level)
+		CreatureVisual.Species.SPORE:
+			return sin(_breath_phase * 0.45) * 0.018
+		CreatureVisual.Species.CRYSTAL:
+			return sin(_breath_phase * 0.7) * 0.012
+	return sin(_breath_phase * 0.8) * 0.02
 
 
 func _set_selection_visual(value: bool) -> void:

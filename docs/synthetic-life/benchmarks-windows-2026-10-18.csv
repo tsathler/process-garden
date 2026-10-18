@@ -1,0 +1,13 @@
+renderer,population,seed,duration_s,warmup_s,mean_fps,p95_frame_ms,peak_frame_ms,static_memory_start_mib,static_memory_end_mib,static_memory_peak_mib,max_nodes,max_orphans,max_creatures,max_tracked,invalid_snapshots,raw_log
+legacy,50,2025,30,5,59.63,16.704,69.079,33.71,34.65,34.69,67,0,30,51,0,C:\Projects\ProcessGarden-CV23A-Validation\validation-logs\E05.2\benchmark-final-legacy-50.log
+legacy,150,2025,30,5,58.63,16.711,101.676,34.02,35.02,35.07,67,0,30,151,0,C:\Projects\ProcessGarden-CV23A-Validation\validation-logs\E05.2\benchmark-final-legacy-150.log
+legacy,300,2025,30,5,57.13,16.727,201.378,34.85,35.48,35.54,67,0,30,301,0,C:\Projects\ProcessGarden-CV23A-Validation\validation-logs\E05.2\benchmark-final-legacy-300.log
+legacy,500,2025,30,5,54.97,16.743,260.900,35.46,36.09,36.09,67,0,30,501,0,C:\Projects\ProcessGarden-CV23A-Validation\validation-logs\E05.2\benchmark-final-legacy-500.log
+cozy_mystic,50,2025,30,5,59.47,16.710,74.979,33.67,34.29,34.34,97,0,30,51,0,C:\Projects\ProcessGarden-CV23A-Validation\validation-logs\E05.2\benchmark-final-cozy_mystic-50.log
+cozy_mystic,150,2025,30,5,58.47,16.719,111.403,33.98,34.60,34.65,97,0,30,151,0,C:\Projects\ProcessGarden-CV23A-Validation\validation-logs\E05.2\benchmark-final-cozy_mystic-150.log
+cozy_mystic,300,2025,30,5,57.13,16.742,164.669,34.81,35.43,35.50,97,0,30,301,0,C:\Projects\ProcessGarden-CV23A-Validation\validation-logs\E05.2\benchmark-final-cozy_mystic-300.log
+cozy_mystic,500,2025,30,5,55.17,16.741,237.992,35.42,36.04,36.04,97,0,30,501,0,C:\Projects\ProcessGarden-CV23A-Validation\validation-logs\E05.2\benchmark-final-cozy_mystic-500.log
+synthetic_life,50,2025,30,5,58.63,22.167,85.003,34.34,34.94,35.01,97,0,30,51,0,C:\Projects\ProcessGarden-CV23A-Validation\validation-logs\E05.2\benchmark-synthetic-final-50.log
+synthetic_life,150,2025,30,5,57.47,20.725,141.549,34.61,35.62,35.67,97,0,30,151,0,C:\Projects\ProcessGarden-CV23A-Validation\validation-logs\E05.2\benchmark-synthetic-final-150.log
+synthetic_life,300,2025,30,5,57.30,19.014,156.668,35.11,35.71,35.78,97,0,30,301,0,C:\Projects\ProcessGarden-CV23A-Validation\validation-logs\E05.2\benchmark-synthetic-final-300.log
+synthetic_life,500,2025,30,5,55.93,19.206,217.243,35.74,36.32,36.35,97,0,30,501,0,C:\Projects\ProcessGarden-CV23A-Validation\validation-logs\E05.2\benchmark-synthetic-final-500.log

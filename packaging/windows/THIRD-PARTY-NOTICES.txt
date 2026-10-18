@@ -1,0 +1,16 @@
+Process Garden is distributed under the MIT License (see LICENSE.txt).
+
+The licenses directory contains the full license texts distributed with the
+Windows candidate:
+
+- Python 3.14 runtime: Python Software Foundation License and its bundled
+  third-party license notices (PYTHON-LICENSE.txt).
+- psutil 7.2.2: BSD 3-Clause License (PSUTIL-LICENSE.txt).
+- PyInstaller 6.22.3 bootloader: GPLv2 and the PyInstaller bootloader exception
+  (PYINSTALLER-COPYING.txt).
+- Godot Engine 4.7.2: MIT License (GODOT-LICENSE.txt) and its referenced
+  contributor notice (GODOT-AUTHORS.md).
+
+The exact Python development dependency versions are locked in uv.lock.
+pyinstaller-hooks-contrib is used only during packaging and is not included in
+the distributed application.

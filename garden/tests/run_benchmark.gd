@@ -101,7 +101,11 @@ func _read_arguments() -> bool:
 			_seed_value = int(argument.trim_prefix("--seed="))
 		elif argument.begins_with("--renderer="):
 			_renderer_mode = argument.trim_prefix("--renderer=").to_lower()
-			if _renderer_mode != ProcessCreature.RENDERER_LEGACY and _renderer_mode != ProcessCreature.RENDERER_COZY_MYSTIC:
+			if (
+				_renderer_mode != ProcessCreature.RENDERER_LEGACY
+				and _renderer_mode != ProcessCreature.RENDERER_COZY_MYSTIC
+				and _renderer_mode != ProcessCreature.RENDERER_SYNTHETIC_LIFE
+			):
 				push_error("Unsupported visual renderer: %s" % _renderer_mode)
 				return false
 		elif argument.begins_with("--scenario="):

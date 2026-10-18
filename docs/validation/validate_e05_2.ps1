@@ -19,22 +19,38 @@ if (-not (Test-Path -LiteralPath $GodotPath -PathType Leaf)) {
 }
 
 $syncItems = @(
+    @{ Root = $gardenSource; Relative = 'project.godot'; Destination = 'project.godot' },
+    @{ Root = $gardenSource; Relative = 'export_presets.cfg'; Destination = 'export_presets.cfg' },
     @{ Root = $gardenSource; Relative = 'scripts\process_selector.gd'; Destination = 'scripts\process_selector.gd' },
     @{ Root = $gardenSource; Relative = 'scripts\habitat_layout.gd'; Destination = 'scripts\habitat_layout.gd' },
     @{ Root = $gardenSource; Relative = 'scripts\habitat_layout.gd.uid'; Destination = 'scripts\habitat_layout.gd.uid' },
     @{ Root = $gardenSource; Relative = 'scripts\environment.gd'; Destination = 'scripts\environment.gd' },
     @{ Root = $gardenSource; Relative = 'scripts\garden_controller.gd'; Destination = 'scripts\garden_controller.gd' },
     @{ Root = $gardenSource; Relative = 'scripts\creature.gd'; Destination = 'scripts\creature.gd' },
+    @{ Root = $gardenSource; Relative = 'scripts\main.gd'; Destination = 'scripts\main.gd' },
     @{ Root = $gardenSource; Relative = 'scripts\cozy_mystic_sprite_library.gd'; Destination = 'scripts\cozy_mystic_sprite_library.gd' },
     @{ Root = $gardenSource; Relative = 'scripts\cozy_mystic_sprite_library.gd.uid'; Destination = 'scripts\cozy_mystic_sprite_library.gd.uid' },
     @{ Root = $gardenSource; Relative = 'scripts\cozy_mystic_visual.gd'; Destination = 'scripts\cozy_mystic_visual.gd' },
     @{ Root = $gardenSource; Relative = 'scripts\cozy_mystic_visual.gd.uid'; Destination = 'scripts\cozy_mystic_visual.gd.uid' },
+    @{ Root = $gardenSource; Relative = 'scripts\synthetic_wisp.gd'; Destination = 'scripts\synthetic_wisp.gd' },
+    @{ Root = $gardenSource; Relative = 'scripts\collector_process_manager.gd'; Destination = 'scripts\collector_process_manager.gd' },
+    @{ Root = $gardenSource; Relative = 'scripts\collector_process_manager.gd.uid'; Destination = 'scripts\collector_process_manager.gd.uid' },
+    @{ Root = $gardenSource; Relative = 'scripts\snapshot_client.gd'; Destination = 'scripts\snapshot_client.gd' },
+    @{ Root = $gardenSource; Relative = 'scripts\synthetic_life_visual.gd'; Destination = 'scripts\synthetic_life_visual.gd' },
+    @{ Root = $gardenSource; Relative = 'scripts\synthetic_life_visual.gd.uid'; Destination = 'scripts\synthetic_life_visual.gd.uid' },
+    @{ Root = $gardenSource; Relative = 'scripts\synthetic_life_lab.gd'; Destination = 'scripts\synthetic_life_lab.gd' },
+    @{ Root = $gardenSource; Relative = 'scripts\synthetic_life_lab.gd.uid'; Destination = 'scripts\synthetic_life_lab.gd.uid' },
+    @{ Root = $gardenSource; Relative = 'scenes\previews\synthetic_life_lab.tscn'; Destination = 'scenes\previews\synthetic_life_lab.tscn' },
     @{ Root = $gardenSource; Relative = 'tests\run_tests.gd'; Destination = 'tests\run_tests.gd' },
     @{ Root = $gardenSource; Relative = 'tests\run_benchmark.gd'; Destination = 'tests\run_benchmark.gd' },
     @{ Root = $gardenSource; Relative = 'tests\run_sprite_prototype_tests.gd'; Destination = 'tests\run_sprite_prototype_tests.gd' },
     @{ Root = $gardenSource; Relative = 'tests\run_sprite_resolution_tests.gd'; Destination = 'tests\run_sprite_resolution_tests.gd' },
     @{ Root = $gardenSource; Relative = 'tests\run_sprite_resolution_tests.gd.uid'; Destination = 'tests\run_sprite_resolution_tests.gd.uid' },
     @{ Root = $gardenSource; Relative = 'tests\run_animation_poc_tests.gd'; Destination = 'tests\run_animation_poc_tests.gd' },
+    @{ Root = $gardenSource; Relative = 'tests\run_synthetic_wisp_tests.gd'; Destination = 'tests\run_synthetic_wisp_tests.gd' },
+    @{ Root = $gardenSource; Relative = 'tests\run_synthetic_wisp_tests.gd.uid'; Destination = 'tests\run_synthetic_wisp_tests.gd.uid' },
+    @{ Root = $gardenSource; Relative = 'tests\capture_synthetic_garden_preview.gd'; Destination = 'tests\capture_synthetic_garden_preview.gd' },
+    @{ Root = $gardenSource; Relative = 'tests\capture_synthetic_garden_preview.gd.uid'; Destination = 'tests\capture_synthetic_garden_preview.gd.uid' },
     @{ Root = $docsSource; Relative = 'habitat-layout.md'; Destination = 'docs\habitat-layout.md' },
     @{ Root = $docsSource; Relative = 'creature-sprite-pipeline.md'; Destination = 'docs\creature-sprite-pipeline.md' },
     @{ Root = $docsSource; Relative = 'validation\E05.2.md'; Destination = 'docs\validation\E05.2.md' },
@@ -106,14 +122,15 @@ $suites = @(
     @{ Name = 'godot-main'; Runner = 'res://tests/run_tests.gd'; Summary = 'Godot tests: \d+ passed, 0 failed' },
     @{ Name = 'sprite-prototypes'; Runner = 'res://tests/run_sprite_prototype_tests.gd'; Summary = 'Sprite prototype tests: \d+ passed, 0 failed' },
     @{ Name = 'sprite-resolution'; Runner = 'res://tests/run_sprite_resolution_tests.gd'; Summary = 'Sprite resolution tests: \d+ passed, 0 failed' },
-    @{ Name = 'animation-poc'; Runner = 'res://tests/run_animation_poc_tests.gd'; Summary = 'Animation proof tests: \d+ passed, 0 failed' }
+    @{ Name = 'animation-poc'; Runner = 'res://tests/run_animation_poc_tests.gd'; Summary = 'Animation proof tests: \d+ passed, 0 failed' },
+    @{ Name = 'synthetic-wisp'; Runner = 'res://tests/run_synthetic_wisp_tests.gd'; Summary = 'Synthetic Wisp tests: \d+ passed, 0 failed' }
 )
 foreach ($suite in $suites) {
     Invoke-GodotCheck -Name $suite.Name -Arguments @('--headless', '--path', $ProjectPath, '--script', $suite.Runner) -RequiredSummary $suite.Summary
 }
 
 if ($RunBenchmarks) {
-    foreach ($renderer in @('legacy', 'cozy_mystic')) {
+    foreach ($renderer in @('legacy', 'cozy_mystic', 'synthetic_life')) {
         foreach ($population in @(50, 150, 300, 500)) {
             $name = "benchmark-$renderer-$population"
             Invoke-GodotCheck -Name $name -Arguments @(

@@ -1,0 +1,11 @@
+============================= test session starts ==============================
+platform linux -- Python 3.14.4, pytest-8.4.2, pluggy-1.6.0
+rootdir: .
+configfile: pyproject.toml
+testpaths: collector/tests
+collected 19 items
+
+collector/tests/test_api.py ..........                                   [ 52%]
+collector/tests/test_collector.py .........                              [100%]
+
+============================== 19 passed in 1.46s ==============================

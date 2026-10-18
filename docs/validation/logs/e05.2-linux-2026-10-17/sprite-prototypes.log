@@ -1,0 +1,65 @@
+Godot Engine v4.7.2.stable.official.ed1daf0bf - https://godotengine.org
+
+PASS: res://assets/creatures/prototypes/cozy_mystic/wisp_idle.png loads as a Texture2D
+PASS: res://assets/creatures/prototypes/cozy_mystic/wisp_idle.png has valid dimensions
+PASS: res://assets/creatures/prototypes/cozy_mystic/wisp_idle.png exposes pixel data
+PASS: res://assets/creatures/prototypes/cozy_mystic/wisp_idle.png contains nontransparent sprite pixels
+PASS: res://assets/creatures/prototypes/cozy_mystic/wisp_idle.png retains transparent canvas corners
+PASS: res://assets/creatures/prototypes/cozy_mystic/wisp_idle.png retains its authored prototype canvas dimensions
+PASS: res://assets/creatures/prototypes/cozy_mystic/beetle_idle.png loads as a Texture2D
+PASS: res://assets/creatures/prototypes/cozy_mystic/beetle_idle.png has valid dimensions
+PASS: res://assets/creatures/prototypes/cozy_mystic/beetle_idle.png exposes pixel data
+PASS: res://assets/creatures/prototypes/cozy_mystic/beetle_idle.png contains nontransparent sprite pixels
+PASS: res://assets/creatures/prototypes/cozy_mystic/beetle_idle.png retains transparent canvas corners
+PASS: res://assets/creatures/prototypes/cozy_mystic/beetle_idle.png retains its authored prototype canvas dimensions
+PASS: res://assets/creatures/prototypes/cozy_mystic/moth_idle.png loads as a Texture2D
+PASS: res://assets/creatures/prototypes/cozy_mystic/moth_idle.png has valid dimensions
+PASS: res://assets/creatures/prototypes/cozy_mystic/moth_idle.png exposes pixel data
+PASS: res://assets/creatures/prototypes/cozy_mystic/moth_idle.png contains nontransparent sprite pixels
+PASS: res://assets/creatures/prototypes/cozy_mystic/moth_idle.png retains transparent canvas corners
+PASS: res://assets/creatures/prototypes/cozy_mystic/moth_idle.png retains its authored prototype canvas dimensions
+PASS: res://assets/creatures/prototypes/cozy_mystic/spore_idle.png loads as a Texture2D
+PASS: res://assets/creatures/prototypes/cozy_mystic/spore_idle.png has valid dimensions
+PASS: res://assets/creatures/prototypes/cozy_mystic/spore_idle.png exposes pixel data
+PASS: res://assets/creatures/prototypes/cozy_mystic/spore_idle.png contains nontransparent sprite pixels
+PASS: res://assets/creatures/prototypes/cozy_mystic/spore_idle.png retains transparent canvas corners
+PASS: res://assets/creatures/prototypes/cozy_mystic/spore_idle.png retains its authored prototype canvas dimensions
+PASS: res://assets/creatures/prototypes/cozy_mystic/crystal_idle.png loads as a Texture2D
+PASS: res://assets/creatures/prototypes/cozy_mystic/crystal_idle.png has valid dimensions
+PASS: res://assets/creatures/prototypes/cozy_mystic/crystal_idle.png exposes pixel data
+PASS: res://assets/creatures/prototypes/cozy_mystic/crystal_idle.png contains nontransparent sprite pixels
+PASS: res://assets/creatures/prototypes/cozy_mystic/crystal_idle.png retains transparent canvas corners
+PASS: res://assets/creatures/prototypes/cozy_mystic/crystal_idle.png retains its authored prototype canvas dimensions
+PASS: res://assets/creatures/prototypes/cozy_mystic/larva_idle.png loads as a Texture2D
+PASS: res://assets/creatures/prototypes/cozy_mystic/larva_idle.png has valid dimensions
+PASS: res://assets/creatures/prototypes/cozy_mystic/larva_idle.png exposes pixel data
+PASS: res://assets/creatures/prototypes/cozy_mystic/larva_idle.png contains nontransparent sprite pixels
+PASS: res://assets/creatures/prototypes/cozy_mystic/larva_idle.png retains transparent canvas corners
+PASS: res://assets/creatures/prototypes/cozy_mystic/larva_idle.png retains its authored prototype canvas dimensions
+PASS: sprite prototype preserves the project's Compatibility renderer
+PASS: the existing visual species hash remains deterministic
+PASS: legacy renderer retains its four original procedural forms
+PASS: the existing Wisp hitbox remains available
+PASS: the Wisp production hitbox is unchanged
+PASS: the existing Beetle hitbox remains available
+PASS: the Beetle production hitbox is unchanged
+PASS: comparison preview scene instantiates
+PASS: comparison has six species plus Wisp and Beetle baselines in three views
+PASS: all six sprite species have game, 2x, and silhouette views
+PASS: sprite origins are centered and all comparisons use nearest filtering
+PASS: wisp sprite is exposed by the opt-in preview
+PASS: beetle sprite is exposed by the opt-in preview
+PASS: spore sprite is exposed by the opt-in preview
+PASS: crystal sprite is exposed by the opt-in preview
+PASS: moth sprite is exposed by the opt-in preview
+PASS: larva sprite is exposed by the opt-in preview
+PASS: context density scene instantiates
+PASS: context preview creates exactly 48 decorative sprites
+PASS: context species layout is deterministic
+PASS: context includes the Spore pilot
+PASS: context includes the Crystal pilot
+PASS: context includes the Larva pilot
+PASS: context preview represents all six species
+PASS: context preview has exactly eight samples of each species
+PASS: context sprites use loaded centered textures with nearest filtering
+Sprite prototype tests: 62 passed, 0 failed

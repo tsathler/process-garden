@@ -1,0 +1,5 @@
+import exit_code=0
+godot-main exit_code=0
+sprite-prototypes exit_code=0
+sprite-resolution exit_code=0
+animation-poc exit_code=0

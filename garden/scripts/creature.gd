@@ -3,12 +3,14 @@ class_name ProcessCreature
 
 const SpriteLibrary = preload("res://scripts/cozy_mystic_sprite_library.gd")
 const CozyVisualScript = preload("res://scripts/cozy_mystic_visual.gd")
+const SyntheticVisualScript = preload("res://scripts/synthetic_life_visual.gd")
 const HabitatLayout = preload("res://scripts/habitat_layout.gd")
 
 enum State { SPAWNING, IDLE, WANDERING, ACTIVE, DESPAWNING }
 
 const RENDERER_LEGACY := "legacy"
 const RENDERER_COZY_MYSTIC := "cozy_mystic"
+const RENDERER_SYNTHETIC_LIFE := "synthetic_life"
 
 signal despawn_finished(identity: String, creature: ProcessCreature)
 
@@ -35,6 +37,7 @@ var habitat_profile: Dictionary = {}
 
 var _visual: CreatureVisual
 var _cozy_visual: CozyMysticVisual
+var _synthetic_visual: SyntheticLifeVisual
 var _random := RandomNumberGenerator.new()
 var _base_speed := 10.0
 var _pause_min := 0.7
@@ -103,10 +106,12 @@ func set_selected(value: bool) -> void:
 		_visual.set_selected(value)
 	if _cozy_visual != null:
 		_cozy_visual.set_selected(value)
+	if _synthetic_visual != null:
+		_synthetic_visual.set_selected(value)
 
 
 func set_visual_renderer(mode: String) -> bool:
-	if mode != RENDERER_LEGACY and mode != RENDERER_COZY_MYSTIC:
+	if mode != RENDERER_LEGACY and mode != RENDERER_COZY_MYSTIC and mode != RENDERER_SYNTHETIC_LIFE:
 		return false
 	if mode == visual_renderer and (mode == RENDERER_LEGACY or _cozy_visual != null):
 		return true
@@ -116,10 +121,14 @@ func set_visual_renderer(mode: String) -> bool:
 	if mode == RENDERER_COZY_MYSTIC and not _ensure_cozy_visual():
 		push_error("Could not create Cozy Mystic visual; retaining LEGACY renderer")
 		return false
+	if mode == RENDERER_SYNTHETIC_LIFE and not _ensure_synthetic_visual():
+		return false
 	if _cozy_visual != null and mode == RENDERER_COZY_MYSTIC:
 		if not _cozy_visual.configure(process_identity, species):
 			push_error("Cozy Mystic creature setup failed; retained LEGACY renderer")
 			return false
+	if mode == RENDERER_SYNTHETIC_LIFE and _synthetic_visual != null:
+		_synthetic_visual.set_species(species)
 	visual_renderer = mode
 	_apply_renderer_visibility()
 	_refresh_visuals()
@@ -144,6 +153,9 @@ func get_visual_center_position() -> Vector2:
 
 
 func get_separation_radius() -> float:
+	if visual_renderer == RENDERER_SYNTHETIC_LIFE and _synthetic_visual != null:
+		var synthetic_bounds := _synthetic_visual.get_local_visual_bounds()
+		return maxf(synthetic_bounds.size.x, synthetic_bounds.size.y) * _synthetic_visual.scale.x * 0.5
 	var opaque := SpriteLibrary.opaque_bounds(species)
 	var conservative_scale := maxf(_ram_scale, _target_ram_scale)
 	return maxf(float(opaque.size.x), float(opaque.size.y)) * (34.0 / float(SpriteLibrary.FRAME_SIZE)) * conservative_scale * 0.5
@@ -153,6 +165,11 @@ func get_visual_occupancy_bounds(margin: float = 3.0) -> Rect2:
 	var conservative_scale := maxf(_ram_scale, _target_ram_scale)
 	var supported := not habitat_profile.is_empty() and habitat_kind != HabitatLayout.Kind.AIR
 	var image_origin := position if supported else get_visual_center_position()
+	if visual_renderer == RENDERER_SYNTHETIC_LIFE and _synthetic_visual != null:
+		var local_bounds := _synthetic_visual.get_local_visual_bounds()
+		var scale_value := conservative_scale * 0.32 * 0.76
+		var center := image_origin + _synthetic_visual.position
+		return Rect2(center + local_bounds.position * scale_value, local_bounds.size * scale_value).grow(margin)
 	return SpriteLibrary.visual_bounds_at(species, image_origin, supported, conservative_scale, margin)
 
 
@@ -190,6 +207,9 @@ func contains_local_point(local_point: Vector2) -> bool:
 	if visual_renderer == RENDERER_COZY_MYSTIC and _cozy_visual != null:
 		var cozy_point := _cozy_visual.transform.affine_inverse() * local_point
 		return _cozy_visual.contains_body_point(cozy_point)
+	if visual_renderer == RENDERER_SYNTHETIC_LIFE and _synthetic_visual != null:
+		var synthetic_point := _synthetic_visual.transform.affine_inverse() * local_point
+		return _synthetic_visual.contains_local_point(synthetic_point)
 	if _visual == null:
 		return false
 	var body_point := _visual.transform.affine_inverse() * local_point
@@ -204,6 +224,8 @@ func set_process_record(record: Dictionary, identity: String) -> void:
 	process_pid = int(record["pid"])
 	cpu_percent = record["cpu_percent"]
 	memory_rss_bytes = maxi(int(record["memory_rss_bytes"]), 0)
+	if _synthetic_visual != null:
+		_synthetic_visual.set_metrics(cpu_percent, memory_rss_bytes)
 	_target_activity = _activity_from_cpu(cpu_percent, process_pid)
 	_target_ram_scale = _scale_for_memory(memory_rss_bytes)
 
@@ -311,6 +333,8 @@ func _reset_for_identity(identity: String) -> void:
 		_visual.set_species(_legacy_species_for(species))
 	if _cozy_visual != null:
 		_cozy_visual.configure(identity, species)
+	if _synthetic_visual != null:
+		_synthetic_visual.set_species(species)
 	_base_speed = _random.randf_range(8.0, 13.0)
 	_pause_min = _random.randf_range(0.65, 1.0)
 	_pause_max = _pause_min + _random.randf_range(0.65, 1.2)
@@ -615,6 +639,12 @@ func _refresh_visuals() -> void:
 		_cozy_visual.scale = _visual.scale * (CozyMysticVisual.DISPLAY_SIZE / float(SpriteLibrary.FRAME_SIZE))
 		_cozy_visual.modulate = Color(brightness, brightness, brightness, _transition_progress)
 		_cozy_visual.set_activity(_activity_level)
+	if _synthetic_visual != null:
+		_synthetic_visual.position = _visual.position
+		_synthetic_visual.rotation = _visual.rotation
+		_synthetic_visual.scale = _visual.scale * 0.32
+		_synthetic_visual.modulate = Color(brightness, brightness, brightness, _transition_progress)
+		_synthetic_visual.set_metrics(cpu_percent, memory_rss_bytes)
 	_set_selection_visual(is_selected)
 
 
@@ -624,6 +654,8 @@ func _apply_renderer_visibility() -> void:
 	if _cozy_visual != null:
 		_cozy_visual.visible = visual_renderer == RENDERER_COZY_MYSTIC
 		_cozy_visual.set_playback_active(visual_renderer == RENDERER_COZY_MYSTIC)
+	if _synthetic_visual != null:
+		_synthetic_visual.visible = visual_renderer == RENDERER_SYNTHETIC_LIFE
 
 
 func _ensure_cozy_visual() -> bool:
@@ -634,6 +666,18 @@ func _ensure_cozy_visual() -> bool:
 		return false
 	_cozy_visual.name = "CozyVisual"
 	add_child(_cozy_visual)
+	return true
+
+
+func _ensure_synthetic_visual() -> bool:
+	if _synthetic_visual != null:
+		return true
+	_synthetic_visual = SyntheticVisualScript.new() as SyntheticLifeVisual
+	if _synthetic_visual == null:
+		return false
+	_synthetic_visual.name = "SyntheticVisual"
+	_synthetic_visual.set_species(species)
+	add_child(_synthetic_visual)
 	return true
 
 
@@ -695,3 +739,5 @@ func _set_selection_visual(value: bool) -> void:
 		_visual.set_selected(value)
 	if _cozy_visual != null:
 		_cozy_visual.set_selected(value)
+	if _synthetic_visual != null:
+		_synthetic_visual.set_selected(value)

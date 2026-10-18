@@ -2,6 +2,7 @@ extends Control
 
 const ProcessRegistryScript = preload("res://scripts/process_registry.gd")
 const DemoSnapshotSourceScript = preload("res://scripts/demo_snapshot_source.gd")
+const CollectorProcessManagerScript = preload("res://scripts/collector_process_manager.gd")
 
 const SOURCE_REAL := "REAL"
 const SOURCE_DEMO := "DEMO"
@@ -15,6 +16,7 @@ const COLOR_WAITING := Color("#a9bfd0")
 
 var _registry: ProcessRegistry
 var _garden: GardenController
+var _environment: CaveEnvironment
 var _status_label: Label
 var _counts_label: Label
 var _error_label: Label
@@ -31,6 +33,8 @@ var _demo_controls: HBoxContainer
 var _demo_scenario_option: OptionButton
 var _demo_seed_input: SpinBox
 var _demo_source: DemoSnapshotSource
+var _collector_manager: CollectorProcessManager
+var _snapshot_client: SnapshotClient
 var _source_mode := SOURCE_REAL
 var _demo_population := 150
 var _demo_seed := 2025
@@ -38,25 +42,44 @@ var _last_monitored_count := 0
 var _last_represented_count := 0
 var _last_connection_state := ""
 var _renderer_error := ""
+var _collector_error := ""
 
 
 func _ready() -> void:
 	_registry = _new_registry()
 	_garden = get_node("Garden") as GardenController
+	_environment = get_node("Garden/Environment") as CaveEnvironment
+	_environment.set_synthetic_theme(true)
 	_garden.representation_changed.connect(_on_representation_changed)
 	_garden.selection_changed.connect(_on_selection_changed)
-	var client := get_node("SnapshotClient") as SnapshotClient
-	client.snapshot_received.connect(_on_snapshot_received)
-	client.request_failed.connect(_on_request_failed)
+	_snapshot_client = get_node("SnapshotClient") as SnapshotClient
+	_snapshot_client.snapshot_received.connect(_on_snapshot_received)
+	_snapshot_client.request_failed.connect(_on_request_failed)
+	_collector_manager = CollectorProcessManagerScript.new() as CollectorProcessManager
+	_collector_manager.name = "CollectorProcessManager"
+	add_child(_collector_manager)
 	_build_overlay()
-	_renderer_mode_option.select(
-		1 if _garden.get_visual_renderer() == ProcessCreature.RENDERER_COZY_MYSTIC else 0
-	)
+	_garden.set_visual_renderer(ProcessCreature.RENDERER_SYNTHETIC_LIFE)
+	_renderer_mode_option.select(2)
 	_refresh_timer = Timer.new()
 	_refresh_timer.wait_time = 0.25
 	_refresh_timer.timeout.connect(_refresh_status)
 	add_child(_refresh_timer)
 	_refresh_timer.start()
+	_refresh_status()
+	if _collector_manager.should_manage_bundled_collector():
+		_snapshot_client.set_polling_enabled(false)
+		_collector_error = "Starting the bundled local collector…"
+		call_deferred("_start_bundled_collector")
+
+
+func _start_bundled_collector() -> void:
+	var result: Dictionary = await _collector_manager.launch_and_configure(_snapshot_client)
+	if result.get("ok", false):
+		_collector_error = ""
+		_snapshot_client.set_polling_enabled(true)
+	else:
+		_collector_error = str(result.get("error", "bundled_collector_start_failed · DEMO remains available"))
 	_refresh_status()
 
 
@@ -119,16 +142,18 @@ func _on_source_mode_selected(index: int) -> void:
 
 
 func _on_renderer_mode_selected(index: int) -> void:
-	var mode := (
-		ProcessCreature.RENDERER_COZY_MYSTIC
-		if _renderer_mode_option.get_item_id(index) == 1
-		else ProcessCreature.RENDERER_LEGACY
-	)
+	var renderer_id := _renderer_mode_option.get_item_id(index)
+	var mode := ProcessCreature.RENDERER_LEGACY
+	if renderer_id == 1:
+		mode = ProcessCreature.RENDERER_COZY_MYSTIC
+	elif renderer_id == 2:
+		mode = ProcessCreature.RENDERER_SYNTHETIC_LIFE
 	if not _garden.set_visual_renderer(mode):
-		_renderer_error = "Cozy Mystic assets unavailable · LEGACY renderer retained"
+		_renderer_error = "Visual renderer unavailable · previous renderer retained"
 		_renderer_mode_option.select(0)
 	else:
 		_renderer_error = ""
+		_environment.set_synthetic_theme(mode == ProcessCreature.RENDERER_SYNTHETIC_LIFE)
 	_refresh_status()
 
 
@@ -195,7 +220,7 @@ func _build_overlay() -> void:
 	title.add_theme_color_override("font_color", COLOR_TEXT)
 	identity_column.add_child(title)
 	var subtitle := Label.new()
-	subtitle.text = "LIVING SYSTEM  ·  FIELD OBSERVATORY"
+	subtitle.text = "SYNTHETIC LIFE  ·  LOCAL PROCESS SANCTUARY"
 	subtitle.add_theme_font_size_override("font_size", 10)
 	subtitle.add_theme_color_override("font_color", COLOR_MUTED)
 	identity_column.add_child(subtitle)
@@ -226,9 +251,10 @@ func _build_overlay() -> void:
 	_renderer_mode_option.name = "VisualRenderer"
 	_renderer_mode_option.add_item("LEGACY", 0)
 	_renderer_mode_option.add_item("COZY", 1)
-	_renderer_mode_option.select(0)
-	_renderer_mode_option.custom_minimum_size = Vector2(76.0, 24.0)
-	_renderer_mode_option.tooltip_text = "Compare the legacy visual with Cozy Mystic sprites"
+	_renderer_mode_option.add_item("SYNTH", 2)
+	_renderer_mode_option.select(2)
+	_renderer_mode_option.custom_minimum_size = Vector2(88.0, 24.0)
+	_renderer_mode_option.tooltip_text = "Choose Synthetic Life or legacy visual renderers"
 	_style_control(_renderer_mode_option, true)
 	_renderer_mode_option.item_selected.connect(_on_renderer_mode_selected)
 	connection_row.add_child(_renderer_mode_option)
@@ -447,7 +473,7 @@ func _refresh_status() -> void:
 			_last_monitored_count,
 			_last_represented_count,
 		]
-		_error_label.text = _renderer_error
+		_error_label.text = _renderer_error if not _renderer_error.is_empty() else _collector_error
 		_refresh_empty_state(ProcessRegistry.STATE_CONNECTED)
 		return
 	var freshness := "waiting for collector"
@@ -466,8 +492,8 @@ func _refresh_status() -> void:
 		_last_monitored_count,
 		_last_represented_count,
 	]
-	_error_label.text = (
-		_renderer_error if not _renderer_error.is_empty() else _connection_message(str(state["state"]))
+	_error_label.text = _renderer_error if not _renderer_error.is_empty() else (
+		_collector_error if not _collector_error.is_empty() else _connection_message(str(state["state"]))
 	)
 	_set_label_color(_error_label, state_color)
 	_refresh_empty_state(str(state["state"]))

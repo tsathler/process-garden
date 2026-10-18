@@ -5,7 +5,7 @@ config_version=5
 
 [application]
 
-config/name="Process Garden — Living System"
+config/name="Process Garden — Synthetic Life Sanctuary"
 run/main_scene="res://scenes/main.tscn"
 run/max_fps=60
 config/features=PackedStringArray("4.7", "GL Compatibility")

@@ -121,11 +121,16 @@ func get_visual_renderer() -> String:
 
 
 func set_visual_renderer(mode: String) -> bool:
-	if mode != ProcessCreature.RENDERER_LEGACY and mode != ProcessCreature.RENDERER_COZY_MYSTIC:
+	if mode != ProcessCreature.RENDERER_LEGACY and mode != ProcessCreature.RENDERER_COZY_MYSTIC and mode != ProcessCreature.RENDERER_SYNTHETIC_LIFE:
 		return false
 	if mode == ProcessCreature.RENDERER_COZY_MYSTIC and not SpriteLibrary.load_all():
 		push_error("Cozy Mystic sprite resources failed validation; LEGACY remains active")
 		return false
+	if mode == ProcessCreature.RENDERER_SYNTHETIC_LIFE:
+		var synthetic_script := load("res://scripts/synthetic_life_visual.gd")
+		if synthetic_script == null:
+			push_error("Synthetic Life renderer script is unavailable; current renderer remains active")
+			return false
 	visual_renderer = mode
 	for creature_value in _creatures.values():
 		var creature := creature_value as ProcessCreature

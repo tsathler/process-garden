@@ -29,6 +29,7 @@ var _habitat_profiles: Array[Dictionary] = []
 var _support_profiles: Array[Dictionary] = []
 var _mushroom_profiles: Array[Dictionary] = []
 var _ground_bank_profiles: Array[Dictionary] = []
+var _synthetic_theme := false
 
 
 func _ready() -> void:
@@ -90,6 +91,13 @@ func set_habitat_debug_visible(value: bool) -> void:
 	queue_redraw()
 
 
+func set_synthetic_theme(value: bool) -> void:
+	if _synthetic_theme == value:
+		return
+	_synthetic_theme = value
+	queue_redraw()
+
+
 func _seed_particles() -> void:
 	var random := RandomNumberGenerator.new()
 	random.seed = PARTICLE_SEED
@@ -102,6 +110,11 @@ func _seed_particles() -> void:
 
 
 func _draw() -> void:
+	if _synthetic_theme:
+		_draw_synthetic_environment()
+		if show_habitat_debug:
+			_draw_habitat_debug()
+		return
 	_draw_background()
 	_draw_distant_rock()
 	_draw_midground()
@@ -110,6 +123,56 @@ func _draw() -> void:
 	_draw_ambient()
 	if show_habitat_debug:
 		_draw_habitat_debug()
+
+
+func _draw_synthetic_environment() -> void:
+	draw_rect(Rect2(Vector2.ZERO, FIELD_SIZE), Color("#070d18"))
+	draw_rect(Rect2(Vector2(0.0, 0.0), Vector2(FIELD_SIZE.x, 55.0)), Color("#091421"))
+	draw_circle(Vector2(132.0, 151.0), 126.0, Color("#12313c", 0.11))
+	draw_circle(Vector2(509.0, 176.0), 144.0, Color("#142849", 0.12))
+	draw_rect(Rect2(Vector2(0.0, 54.0), Vector2(FIELD_SIZE.x, 1.0)), Color("#28424e", 0.72))
+	draw_rect(Rect2(Vector2(0.0, 74.0), Vector2(FIELD_SIZE.x, 1.0)), Color("#173541", 0.42))
+	for x in [52.0, 161.0, 270.0, 379.0, 488.0, 597.0]:
+		draw_line(Vector2(x, 72.0), Vector2(x - 11.0, 214.0), Color("#1d3745", 0.31), 1.0, true)
+	_draw_polygon(
+		[
+			Vector2(0, 236), Vector2(0, 122), Vector2(75, 146), Vector2(142, 119),
+			Vector2(221, 149), Vector2(301, 124), Vector2(376, 151), Vector2(463, 117),
+			Vector2(540, 145), Vector2(640, 120), Vector2(640, 253),
+		],
+		Color("#0c1b29")
+	)
+	for profile in _support_profiles:
+		var style := str(profile.get("structure_style", "wall_shelf"))
+		var fill := Color("#172c3a") if style == "mineral_shelf" else Color("#132b31")
+		var edge := Color("#47788c") if style == "mineral_shelf" else Color("#397d78")
+		draw_colored_polygon(HabitatLayout.structure_polygon(profile), fill)
+		var surface: PackedVector2Array = profile["points"]
+		draw_polyline(surface, edge, 2.0, true)
+		for point in surface:
+			draw_circle(point, 1.4, Color(edge, 0.72))
+	for profile in _ground_bank_profiles:
+		draw_colored_polygon(HabitatLayout.ground_bank_polygon(profile), Color("#10232d"))
+		draw_polyline(profile["points"], Color("#28545b", 0.65), 1.0, true)
+	for profile in _mushroom_profiles:
+		var pad := HabitatLayout.mushroom_cap_polygon(profile)
+		draw_colored_polygon(pad, Color("#12323b"))
+		draw_polyline(pad, Color("#3b8887", 0.78), 1.3, true)
+		var pad_center: Vector2 = profile["mushroom_center"]
+		draw_line(pad_center + Vector2(-8.0, -13.0), pad_center + Vector2(8.0, -13.0), Color("#64c5b9", 0.38), 1.0, true)
+	var ground_fill := _ground_points.duplicate()
+	ground_fill.append(Vector2(FIELD_SIZE.x, FIELD_SIZE.y))
+	ground_fill.append(Vector2(0.0, FIELD_SIZE.y))
+	draw_colored_polygon(ground_fill, Color("#0d1a25"))
+	draw_polyline(_ground_points, Color("#3d8b84", 0.72), 2.0, true)
+	for index in [1, 4, 8, 12, 16, 18]:
+		var anchor := _ground_points[index]
+		draw_circle(anchor, 3.0, Color("#142c36"))
+		draw_arc(anchor, 5.0, 0.25, PI - 0.25, 20, Color("#4ba69b", 0.45), 1.0, true)
+	for y in [316.0, 330.0, 344.0]:
+		draw_line(Vector2(18.0, y), Vector2(622.0, y), Color("#182d38", 0.62), 1.0, true)
+	draw_line(Vector2(0.0, 359.0), Vector2(FIELD_SIZE.x, 359.0), Color("#315e61", 0.42), 1.0, true)
+	_draw_ambient()
 
 
 func _draw_background() -> void:

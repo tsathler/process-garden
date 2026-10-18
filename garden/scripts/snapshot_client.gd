@@ -64,6 +64,14 @@ func set_polling_enabled(enabled: bool) -> void:
 			_request_active = false
 
 
+func set_endpoint_url(value: String) -> bool:
+	if not _is_allowed_endpoint(value):
+		return false
+	endpoint_url = value
+	_endpoint_is_valid = true
+	return true
+
+
 func _request_snapshot() -> void:
 	if not _polling_enabled or _request_active or not _endpoint_is_valid:
 		return

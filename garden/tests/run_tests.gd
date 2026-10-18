@@ -6,6 +6,7 @@ const Selector = preload("res://scripts/process_selector.gd")
 const CreatureVisualScript = preload("res://scripts/creature_visual.gd")
 const SpriteLibrary = preload("res://scripts/cozy_mystic_sprite_library.gd")
 const CozyVisualScript = preload("res://scripts/cozy_mystic_visual.gd")
+const SyntheticVisualScript = preload("res://scripts/synthetic_life_visual.gd")
 const HabitatLayoutScript = preload("res://scripts/habitat_layout.gd")
 const GardenControllerScript = preload("res://scripts/garden_controller.gd")
 const DemoSnapshotSourceScript = preload("res://scripts/demo_snapshot_source.gd")
@@ -34,6 +35,7 @@ func _run() -> void:
 	_test_visible_population_limit()
 	await _test_species_identity_mapping()
 	await _test_visual_renderer_integration()
+	await _test_synthetic_renderer_integration()
 	await _test_habitat_layout()
 	await _test_creature_design_preview()
 	await _test_environment_ambience()
@@ -256,6 +258,43 @@ func _test_visual_renderer_integration() -> void:
 	)
 	peer_visual.queue_free()
 	_check(controller.get_creature_count() == 1, "renderer changes do not duplicate process nodes")
+	controller.queue_free()
+	await process_frame
+
+
+func _test_synthetic_renderer_integration() -> void:
+	var controller := GardenControllerScript.new() as GardenController
+	var layer := Node2D.new()
+	layer.name = "Creatures"
+	controller.add_child(layer)
+	root.add_child(controller)
+	await process_frame
+	_check(controller.set_visual_renderer(ProcessCreature.RENDERER_SYNTHETIC_LIFE), "garden enables the Synthetic Life renderer")
+	var record := _proc(61321, 1723456789.25, 42.0, 268_435_456)
+	var identity := Parser.identity_key(record)
+	controller.reconcile_processes([record])
+	await process_frame
+	var creature := controller.get_creature(identity)
+	_check(creature != null, "Synthetic Life renderer uses the existing process node")
+	if creature == null:
+		controller.queue_free()
+		await process_frame
+		return
+	var synthetic := creature.get_node_or_null("SyntheticVisual") as SyntheticLifeVisual
+	_check(synthetic != null and synthetic.visible, "Synthetic Life visual replaces the fallback without duplication")
+	_check(not (creature.get_node("Visual") as CreatureVisual).visible, "legacy visual stays hidden while Synthetic Life is active")
+	_check(synthetic != null and synthetic.species == creature.species, "process identity keeps its deterministic family mapping")
+	_check(controller.select_at(creature.get_visual_center_position()) == identity, "Synthetic Life bounds remain selectable")
+	_check(creature.is_selected, "Synthetic Life selection remains on its process identity")
+	controller.reconcile_processes([_proc(61321, 1723456789.25, 96.0, 2_147_483_648)])
+	creature.advance_simulation(2.0)
+	if synthetic != null:
+		synthetic.advance_visual(2.0)
+		var metrics := synthetic.get_visual_parameters()
+		_check(metrics["state"] == "Overclocked", "Synthetic Life receives CPU activity from the process record")
+		_check(metrics["mass_scale"] > 1.0, "Synthetic Life receives RAM mass from the process record")
+	_check(controller.set_visual_renderer(ProcessCreature.RENDERER_LEGACY), "legacy fallback remains selectable")
+	_check(controller.get_creature(identity) == creature and creature.is_selected, "renderer fallback preserves selection and process identity")
 	controller.queue_free()
 	await process_frame
 
@@ -605,6 +644,7 @@ func _test_environment_ambience() -> void:
 		return
 	root.add_child(first)
 	root.add_child(second)
+	root.add_child(main_scene)
 	await process_frame
 	_check(
 		scene_environment.get_index() < creature_layer.get_index(),
@@ -624,6 +664,12 @@ func _test_environment_ambience() -> void:
 	first.set_habitat_debug_visible(false)
 	_check(first.get_ambient_particle_count() <= 24, "ambient decoration remains below its configured cap")
 	_check(first.get_child_count() == 0, "ambient particles do not create interactive scene nodes")
+	var main_environment := main_scene.get_node("Garden/Environment") as CaveEnvironment
+	_check(main_environment._synthetic_theme, "main application selects the Synthetic Life terrarium")
+	main_scene.call("_on_renderer_mode_selected", 0)
+	_check(not main_environment._synthetic_theme, "legacy renderer restores its original cave environment")
+	main_scene.call("_on_renderer_mode_selected", 2)
+	_check(main_environment._synthetic_theme, "Synthetic Life renderer restores the terrarium environment")
 	var first_positions := first.get_ambient_particle_positions()
 	var second_positions := second.get_ambient_particle_positions()
 	_check(first_positions == second_positions, "ambient particle placement is deterministic")

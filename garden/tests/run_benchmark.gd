@@ -15,6 +15,7 @@ const DEMO_SAMPLE_INTERVAL_SECONDS := 2.0
 var _duration_seconds := DEFAULT_DURATION_SECONDS
 var _warmup_seconds := DEFAULT_WARMUP_SECONDS
 var _seed_value := DEFAULT_SEED
+var _renderer_mode := ProcessCreature.RENDERER_LEGACY
 var _scenarios: Array[int] = []
 var _benchmark_root: Node2D
 var _garden: GardenController
@@ -76,8 +77,8 @@ func _run() -> void:
 		quit(1)
 		return
 	output.store_line(_csv_header())
-	print("Process Garden benchmark · Godot %s · %s" % [
-		str(Engine.get_version_info().get("string", "unknown")), OS.get_name()
+	print("Process Garden benchmark · Godot %s · %s · %s" % [
+		str(Engine.get_version_info().get("string", "unknown")), OS.get_name(), _renderer_mode
 	])
 	print(_csv_header())
 	for population in _scenarios:
@@ -98,6 +99,11 @@ func _read_arguments() -> bool:
 			_warmup_seconds = argument.trim_prefix("--warmup-seconds=").to_float()
 		elif argument.begins_with("--seed="):
 			_seed_value = int(argument.trim_prefix("--seed="))
+		elif argument.begins_with("--renderer="):
+			_renderer_mode = argument.trim_prefix("--renderer=").to_lower()
+			if _renderer_mode != ProcessCreature.RENDERER_LEGACY and _renderer_mode != ProcessCreature.RENDERER_COZY_MYSTIC:
+				push_error("Unsupported visual renderer: %s" % _renderer_mode)
+				return false
 		elif argument.begins_with("--scenario="):
 			var requested := int(argument.trim_prefix("--scenario="))
 			if not DEFAULT_SCENARIOS.has(requested):
@@ -126,6 +132,9 @@ func _create_harness() -> bool:
 	creature_layer.name = "Creatures"
 	_garden.add_child(creature_layer)
 	_garden.profiling_enabled = true
+	if not _garden.set_visual_renderer(_renderer_mode):
+		push_error("Could not enable benchmark visual renderer: %s" % _renderer_mode)
+		return false
 	_benchmark_root.add_child(_garden)
 	_source = DemoSnapshotSourceScript.new() as DemoSnapshotSource
 	if _source == null:
@@ -305,7 +314,13 @@ func _result_row(population: int) -> String:
 	var average_fps := 0.0
 	if not _frame_deltas_ms.is_empty():
 		average_fps = float(_frame_deltas_ms.size()) / (_duration_seconds)
+	var composition: Dictionary = _garden.get_composition_metrics()
+	var max_surface_occupancy := 0
+	var surface_counts: Dictionary = composition["by_surface"]
+	for count_value in surface_counts.values():
+		max_surface_occupancy = maxi(max_surface_occupancy, int(count_value))
 	var columns := PackedStringArray([
+		_renderer_mode,
 		str(Engine.get_version_info().get("string", "unknown")),
 		OS.get_name(),
 		str(population),
@@ -365,12 +380,18 @@ func _result_row(population: int) -> String:
 		"%.3f" % _maximum(_creature_reconcile_ms),
 		"%.3f" % _average(_callback_total_ms),
 		"%.3f" % _maximum(_callback_total_ms),
+		str(int(composition["overlap_pairs"])),
+		"%.2f" % float(composition["overlap_area"]),
+		str(int(composition["unsupported"])),
+		str(int(composition["potential_interface_intersections"])),
+		str(int(composition["saturated_surfaces"])),
+		str(max_surface_occupancy),
 	])
 	return ",".join(columns)
 
 
 func _csv_header() -> String:
-	return "godot_version,os,scenario,seed,duration_s,frames,avg_fps,min_rolling_fps,avg_frame_ms,p95_frame_ms,max_frame_ms,avg_engine_frame_ms,p95_engine_frame_ms,max_engine_frame_ms,static_memory_start_mib,static_memory_end_mib,sampled_static_memory_peak_mib,max_nodes,max_orphans,max_creatures,max_tracked_processes,snapshots,invalid_snapshots,avg_garden_reconcile_ms,p95_garden_reconcile_ms,max_garden_reconcile_ms,avg_demo_tick_ms,p95_demo_tick_ms,max_demo_tick_ms,avg_frame_after_tick_ms,avg_engine_frame_after_tick_ms,max_frame_after_tick_ms,max_frame_without_tick_ms,max_engine_frame_after_tick_ms,max_engine_frame_without_tick_ms,avg_demo_metrics_ms,max_demo_metrics_ms,avg_demo_lifecycle_ms,max_demo_lifecycle_ms,avg_snapshot_copy_ms,max_snapshot_copy_ms,avg_demo_contract_validation_ms,max_demo_contract_validation_ms,avg_json_encode_ms,max_json_encode_ms,avg_json_parse_validation_ms,max_json_parse_validation_ms,avg_registry_ms,max_registry_ms,avg_registry_get_records_ms,max_registry_get_records_ms,avg_garden_process_copy_ms,max_garden_process_copy_ms,avg_selector_ms,max_selector_ms,avg_creature_reconcile_ms,max_creature_reconcile_ms,avg_snapshot_callback_ms,max_snapshot_callback_ms"
+	return "visual_renderer,godot_version,os,scenario,seed,duration_s,frames,avg_fps,min_rolling_fps,avg_frame_ms,p95_frame_ms,max_frame_ms,avg_engine_frame_ms,p95_engine_frame_ms,max_engine_frame_ms,static_memory_start_mib,static_memory_end_mib,sampled_static_memory_peak_mib,max_nodes,max_orphans,max_creatures,max_tracked_processes,snapshots,invalid_snapshots,avg_garden_reconcile_ms,p95_garden_reconcile_ms,max_garden_reconcile_ms,avg_demo_tick_ms,p95_demo_tick_ms,max_demo_tick_ms,avg_frame_after_tick_ms,avg_engine_frame_after_tick_ms,max_frame_after_tick_ms,max_frame_without_tick_ms,max_engine_frame_after_tick_ms,max_engine_frame_without_tick_ms,avg_demo_metrics_ms,max_demo_metrics_ms,avg_demo_lifecycle_ms,max_demo_lifecycle_ms,avg_snapshot_copy_ms,max_snapshot_copy_ms,avg_demo_contract_validation_ms,max_demo_contract_validation_ms,avg_json_encode_ms,max_json_encode_ms,avg_json_parse_validation_ms,max_json_parse_validation_ms,avg_registry_ms,max_registry_ms,avg_registry_get_records_ms,max_registry_get_records_ms,avg_garden_process_copy_ms,max_garden_process_copy_ms,avg_selector_ms,max_selector_ms,avg_creature_reconcile_ms,max_creature_reconcile_ms,avg_snapshot_callback_ms,max_snapshot_callback_ms,composition_overlap_pairs,composition_overlap_area_px2,composition_unsupported,potential_interface_intersections,saturated_surfaces,max_surface_occupancy"
 
 
 func _average(values: Array[float]) -> float:

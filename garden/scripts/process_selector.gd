@@ -4,10 +4,11 @@ class_name ProcessSelector
 const SnapshotParserScript = preload("res://scripts/snapshot_parser.gd")
 const ACTIVITY_BAND_PERCENT := 5.0
 const MAX_CPU_PERCENT := 100.0
+const MAX_VISIBLE_CREATURES := 30
 
 
 func select_processes(
-	processes: Array[Dictionary], selected_identities: Array, limit: int = 60
+	processes: Array[Dictionary], selected_identities: Array, limit: int = MAX_VISIBLE_CREATURES
 ) -> Array[Dictionary]:
 	var selected_lookup: Dictionary = {}
 	for identity in selected_identities:
@@ -37,7 +38,7 @@ func select_processes(
 
 	candidates.sort_custom(_candidate_precedes)
 	var selected: Array[Dictionary] = []
-	var selection_size := mini(maxi(limit, 0), candidates.size())
+	var selection_size := mini(mini(maxi(limit, 0), MAX_VISIBLE_CREATURES), candidates.size())
 	for index in range(selection_size):
 		selected.append(candidates[index]["process"])
 	return selected

@@ -3,16 +3,18 @@ class_name GardenController
 
 const CreatureScene: PackedScene = preload("res://scenes/creature.tscn")
 const SelectorScript = preload("res://scripts/process_selector.gd")
+const MAX_VISIBLE_CREATURES := SelectorScript.MAX_VISIBLE_CREATURES
 const SnapshotParserScript = preload("res://scripts/snapshot_parser.gd")
+const SpriteLibrary = preload("res://scripts/cozy_mystic_sprite_library.gd")
+const HabitatLayoutScript = preload("res://scripts/habitat_layout.gd")
 const DEFAULT_FIELD := Rect2(Vector2(20.0, 88.0), Vector2(600.0, 224.0))
-const MIN_CREATURE_SPACING := 23.0
-const POSITION_ATTEMPTS := 32
 
 signal representation_changed(represented_count: int)
 signal selection_changed(identity: String)
 
-@export_range(0, 60, 1) var creature_limit := 60
+@export_range(0, MAX_VISIBLE_CREATURES, 1) var creature_limit := MAX_VISIBLE_CREATURES
 @export var field_rect := DEFAULT_FIELD
+@export var show_composition_debug := false
 
 var _selector: ProcessSelector
 var _creature_layer: Node2D
@@ -20,10 +22,12 @@ var _creatures: Dictionary = {}
 var _latest_processes: Array[Dictionary] = []
 var _separation_creatures: Array[ProcessCreature] = []
 var _separation_forces: Array[Vector2] = []
+var _separation_radii: Array[float] = []
 var _selected_identity := ""
 var _is_reconciling := false
 var profiling_enabled := false
 var _last_profile_usec: Dictionary = {}
+var visual_renderer := ProcessCreature.RENDERER_LEGACY
 
 
 func _ready() -> void:
@@ -34,6 +38,27 @@ func _ready() -> void:
 
 func _process(delta: float) -> void:
 	update_separation(delta)
+	if show_composition_debug:
+		queue_redraw()
+
+
+func _draw() -> void:
+	if not show_composition_debug:
+		return
+	var occupants: Array[Dictionary] = []
+	for creature_value in _creatures.values():
+		var creature := creature_value as ProcessCreature
+		if creature.state != ProcessCreature.State.DESPAWNING:
+			occupants.append(creature.get_layout_occupant())
+	for index in range(occupants.size()):
+		var bounds: Rect2 = occupants[index]["bounds"]
+		var overlaps := false
+		for other_index in range(index):
+			var previous_bounds: Rect2 = occupants[other_index]["bounds"]
+			if bounds.intersects(previous_bounds):
+				overlaps = true
+				draw_rect(previous_bounds, Color("#e28c9c"), false, 1.0)
+		draw_rect(bounds, Color("#e28c9c") if overlaps else Color("#76e1d3"), false, 1.0)
 
 
 func reconcile_processes(processes: Array[Dictionary]) -> void:
@@ -49,7 +74,7 @@ func reconcile_processes(processes: Array[Dictionary]) -> void:
 
 
 func get_creature_count() -> int:
-	# Includes despawning nodes so transitions cannot push the live node count over 60.
+	# Includes despawning nodes so transitions cannot push the live node count over the cap.
 	return _creatures.size()
 
 
@@ -75,6 +100,41 @@ func get_selected_creature() -> ProcessCreature:
 
 func get_last_profile_usec() -> Dictionary:
 	return _last_profile_usec.duplicate()
+
+
+func get_composition_metrics() -> Dictionary:
+	var occupants: Array[Dictionary] = []
+	for creature_value in _creatures.values():
+		var creature := creature_value as ProcessCreature
+		if creature.state == ProcessCreature.State.DESPAWNING and creature.get_lifecycle_progress() <= 0.05:
+			continue
+		occupants.append(creature.get_layout_occupant())
+	var interface_regions: Array[Rect2] = [
+		Rect2(0.0, 0.0, 640.0, 82.0),
+		Rect2(403.0, 234.0, 224.0, 115.0),
+	]
+	return HabitatLayoutScript.analyze_composition(occupants, interface_regions)
+
+
+func get_visual_renderer() -> String:
+	return visual_renderer
+
+
+func set_visual_renderer(mode: String) -> bool:
+	if mode != ProcessCreature.RENDERER_LEGACY and mode != ProcessCreature.RENDERER_COZY_MYSTIC:
+		return false
+	if mode == ProcessCreature.RENDERER_COZY_MYSTIC and not SpriteLibrary.load_all():
+		push_error("Cozy Mystic sprite resources failed validation; LEGACY remains active")
+		return false
+	visual_renderer = mode
+	for creature_value in _creatures.values():
+		var creature := creature_value as ProcessCreature
+		if not creature.set_visual_renderer(mode):
+			visual_renderer = ProcessCreature.RENDERER_LEGACY
+			for rollback_value in _creatures.values():
+				(rollback_value as ProcessCreature).set_visual_renderer(visual_renderer)
+			return false
+	return true
 
 
 func clear_for_source_change() -> void:
@@ -130,12 +190,14 @@ func clear_selection() -> void:
 func update_separation(_delta: float = 0.0) -> void:
 	_separation_creatures.clear()
 	_separation_forces.clear()
+	_separation_radii.clear()
 	for identity in _creatures:
 		var creature := _creatures[identity] as ProcessCreature
 		if creature.state == ProcessCreature.State.DESPAWNING:
 			continue
 		_separation_creatures.append(creature)
 		_separation_forces.append(Vector2.ZERO)
+		_separation_radii.append(creature.get_separation_radius())
 
 	for first_index in range(_separation_creatures.size()):
 		var first := _separation_creatures[first_index]
@@ -144,9 +206,9 @@ func update_separation(_delta: float = 0.0) -> void:
 			var offset := first.get_visual_center_position() - second.get_visual_center_position()
 			var distance_squared := offset.length_squared()
 			var separation_distance := clampf(
-				(first.get_separation_radius() + second.get_separation_radius()) * 0.9,
-				20.0,
-				34.0
+				_separation_radii[first_index] + _separation_radii[second_index] + 6.0,
+				24.0,
+				52.0
 			)
 			if distance_squared >= separation_distance * separation_distance:
 				continue
@@ -193,8 +255,9 @@ func _reconcile_latest() -> void:
 	_is_reconciling = true
 	var selected_identities := _creatures.keys()
 	var selector_start_usec := Time.get_ticks_usec() if profiling_enabled else 0
+	var visible_limit := mini(maxi(creature_limit, 0), MAX_VISIBLE_CREATURES)
 	var selected := _selector.select_processes(
-		_latest_processes, selected_identities, mini(creature_limit, 60)
+		_latest_processes, selected_identities, visible_limit
 	)
 	if profiling_enabled:
 		_last_profile_usec["selector_usec"] = Time.get_ticks_usec() - selector_start_usec
@@ -213,25 +276,39 @@ func _reconcile_latest() -> void:
 		else:
 			creature.begin_despawn()
 
-	var occupied_positions: Array[Vector2] = []
+	var occupied: Array[Dictionary] = []
 	for creature_value in _creatures.values():
-		occupied_positions.append((creature_value as ProcessCreature).position)
+		var existing_creature := creature_value as ProcessCreature
+		occupied.append(existing_creature.get_layout_occupant())
 	var identities: Array[String] = []
 	for identity in desired:
 		identities.append(str(identity))
 	identities.sort()
 	for identity in identities:
-		if _creatures.has(identity) or _creatures.size() >= mini(creature_limit, 60):
+		if _creatures.has(identity) or _creatures.size() >= visible_limit:
 			continue
 		var process: Dictionary = desired[identity]
+		var species := SpriteLibrary.species_for_identity(identity)
+		var memory_bytes := maxi(int(process.get("memory_rss_bytes", 0)), 0)
+		var visual_scale: float = ProcessCreature.scale_for_memory_bytes(memory_bytes)
+		var placement := HabitatLayoutScript.choose_placement_with_envelopes(
+			identity, species, occupied, visual_scale
+		)
+		if placement.is_empty():
+			push_error("No compatible habitat placement for process identity %s" % identity)
+			continue
 		var creature := CreatureScene.instantiate() as ProcessCreature
 		creature.set_movement_bounds(field_rect)
-		creature.position = _choose_position(identity, occupied_positions, creature)
 		creature.despawn_finished.connect(_on_creature_despawn_finished)
 		_creature_layer.add_child(creature)
 		_creatures[identity] = creature
 		creature.set_process_record(process, identity)
-		occupied_positions.append(creature.position)
+		creature.configure_habitat(placement["profile"], placement["position"])
+		if not creature.set_visual_renderer(visual_renderer):
+			visual_renderer = ProcessCreature.RENDERER_LEGACY
+			for existing_value in _creatures.values():
+				(existing_value as ProcessCreature).set_visual_renderer(visual_renderer)
+		occupied.append(creature.get_layout_occupant())
 
 	if profiling_enabled:
 		_last_profile_usec["creature_reconcile_usec"] = (
@@ -253,34 +330,3 @@ func _on_creature_despawn_finished(identity: String, creature: ProcessCreature) 
 		creature.get_parent().remove_child(creature)
 	creature.queue_free()
 	_reconcile_latest()
-
-
-func _choose_position(
-	identity: String, occupied: Array[Vector2], creature: ProcessCreature
-) -> Vector2:
-	var random := RandomNumberGenerator.new()
-	random.seed = posmod(hash(identity), 2_147_483_647) + 1
-	var bounds := creature.get_effective_movement_bounds()
-	var best_position := bounds.get_center()
-	var best_clearance := -1.0
-	for _attempt in range(POSITION_ATTEMPTS):
-		var candidate := Vector2(
-			random.randf_range(bounds.position.x, bounds.end.x),
-			random.randf_range(bounds.position.y, bounds.end.y)
-		)
-		var clearance := _nearest_distance(candidate, occupied)
-		if clearance >= MIN_CREATURE_SPACING:
-			return candidate
-		if clearance > best_clearance:
-			best_clearance = clearance
-			best_position = candidate
-	return best_position
-
-
-func _nearest_distance(candidate: Vector2, occupied: Array[Vector2]) -> float:
-	if occupied.is_empty():
-		return INF
-	var nearest := INF
-	for position in occupied:
-		nearest = minf(nearest, candidate.distance_to(position))
-	return nearest

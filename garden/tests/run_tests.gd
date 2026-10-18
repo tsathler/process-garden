@@ -4,11 +4,17 @@ const Parser = preload("res://scripts/snapshot_parser.gd")
 const Registry = preload("res://scripts/process_registry.gd")
 const Selector = preload("res://scripts/process_selector.gd")
 const CreatureVisualScript = preload("res://scripts/creature_visual.gd")
+const SpriteLibrary = preload("res://scripts/cozy_mystic_sprite_library.gd")
+const CozyVisualScript = preload("res://scripts/cozy_mystic_visual.gd")
+const HabitatLayoutScript = preload("res://scripts/habitat_layout.gd")
 const GardenControllerScript = preload("res://scripts/garden_controller.gd")
 const DemoSnapshotSourceScript = preload("res://scripts/demo_snapshot_source.gd")
 const CreatureScene: PackedScene = preload("res://scenes/creature.tscn")
 const EnvironmentScene: PackedScene = preload("res://scenes/environment.tscn")
 const MainScene: PackedScene = preload("res://scenes/main.tscn")
+const CreatureDesignPreviewScene: PackedScene = preload(
+	"res://scenes/previews/creature_design_preview.tscn"
+)
 
 var _passed := 0
 var _failed := 0
@@ -25,13 +31,18 @@ func _run() -> void:
 	_test_duplicate_identity_and_negative_metric()
 	_test_pid_zero_regression()
 	_test_process_selection()
+	_test_visible_population_limit()
 	await _test_species_identity_mapping()
+	await _test_visual_renderer_integration()
+	await _test_habitat_layout()
+	await _test_creature_design_preview()
 	await _test_environment_ambience()
 	await _test_garden_controller_reconciliation()
 	await _test_creature_behavior_and_lifecycle()
 	await _test_despawn_reuse_and_capacity()
 	_test_separation_and_click_selection()
 	await _test_click_routing_and_process_details()
+	await _test_observatory_ui_states_and_demo_controls()
 	await _test_demo_snapshot_source()
 	await _test_demo_mode_switching()
 	_test_add_persist_remove_and_pid_reuse()
@@ -122,19 +133,19 @@ func _test_species_identity_mapping() -> void:
 	for pid in range(1, 129):
 		var record := _proc(pid, 1700.0 + float(pid), 0.0)
 		var identity := Parser.identity_key(record)
-		var first_species: int = CreatureVisualScript.species_for_identity(identity)
-		var repeated_species: int = CreatureVisualScript.species_for_identity(identity)
+		var first_species: int = SpriteLibrary.species_for_identity(identity)
+		var repeated_species: int = SpriteLibrary.species_for_identity(identity)
 		stable = stable and first_species == repeated_species
 		observed_species[first_species] = true
-	_check(stable, "species mapping remains stable for a complete process identity")
-	_check(observed_species.size() == 4, "stable identity mapping distributes across all four species")
+	_check(stable, "six-species mapping remains stable for a complete process identity")
+	_check(observed_species.size() == SpriteLibrary.SPECIES_COUNT, "identity mapping distributes across all six species")
 
 	var reused_pid_first := Parser.identity_key(_proc(77, 1777.0, 0.0))
 	var reused_pid_second := Parser.identity_key(_proc(77, 2777.0, 0.0))
 	_check(reused_pid_first != reused_pid_second, "species input identity distinguishes reused PIDs")
 	_check(
-		CreatureVisualScript.species_for_identity(reused_pid_first)
-		!= CreatureVisualScript.species_for_identity(reused_pid_second),
+		SpriteLibrary.species_for_identity(reused_pid_first)
+		!= SpriteLibrary.species_for_identity(reused_pid_second),
 		"create_time participates in visual species mapping after PID reuse"
 	)
 
@@ -144,18 +155,424 @@ func _test_species_identity_mapping() -> void:
 	creature.set_process_record(first_record, reused_pid_first)
 	var first_species := creature.species
 	_check(
-		creature._visual.species == first_species,
-		"creature visual receives the species assigned to its process identity"
+		creature._visual.species == creature._legacy_species_for(first_species),
+		"legacy visual receives the compatible form for its stable six-species identity"
 	)
+	_check(creature.get_species_name() == SpriteLibrary.species_name(first_species), "details expose the stable art species")
 	var updated_record := _proc(77, 1777.0, 35.0, 64_000_000)
 	creature.set_process_record(updated_record, reused_pid_first)
 	_check(creature.species == first_species, "metric updates preserve a persistent identity's species")
 	creature.set_process_record(_proc(77, 2777.0, 1.0), reused_pid_second)
 	_check(
-		creature.species == CreatureVisualScript.species_for_identity(reused_pid_second),
+		creature.species == SpriteLibrary.species_for_identity(reused_pid_second),
 		"reused PID receives the species mapped from its new create_time identity"
 	)
 	creature.queue_free()
+	await process_frame
+
+
+func _test_visual_renderer_integration() -> void:
+	_check(SpriteLibrary.load_all(), "all production Cozy Mystic SpriteFrames load")
+	_check(SpriteLibrary.cached_species_count() == SpriteLibrary.SPECIES_COUNT, "one shared SpriteFrames resource is cached per species")
+	var total_unique_frames := 0
+	for species_index in range(SpriteLibrary.SPECIES_COUNT):
+		var paths := SpriteLibrary.frame_paths(species_index)
+		total_unique_frames += paths.size()
+		var frames := SpriteLibrary.frames_for_species(species_index)
+		_check(frames != null, "%s has a production SpriteFrames resource" % SpriteLibrary.species_name(species_index))
+		if frames == null:
+			continue
+		_check(frames.has_animation("idle") and frames.get_animation_loop("idle"), "%s has a looping idle cycle" % SpriteLibrary.species_name(species_index))
+		_check(frames.get_frame_count("idle") == SpriteLibrary.cycle_for_species(species_index).size(), "%s uses its approved frame cycle" % SpriteLibrary.species_name(species_index))
+		for path in paths:
+			var texture := load(path) as Texture2D
+			_check(texture != null, "%s production frame loads" % path)
+			if texture != null:
+				_check(texture.get_width() == 128 and texture.get_height() == 128, "%s production frame stays 128x128" % path)
+				var image := texture.get_image()
+				_check(image != null and not image.is_empty() and image.get_pixel(0, 0).a == 0.0, "%s keeps RGBA transparency" % path)
+			var prototype_path := path.replace("res://assets/creatures/cozy_mystic/128/", "res://assets/creatures/prototypes/cozy_mystic/cv22b/128/")
+			_check(
+				FileAccess.get_sha256(ProjectSettings.globalize_path(path))
+				== FileAccess.get_sha256(ProjectSettings.globalize_path(prototype_path)),
+				"%s matches the approved CV2.2-B frame byte-for-byte" % path
+			)
+			_check(SpriteLibrary.frames_for_species(species_index) == frames, "%s SpriteFrames remains shared" % SpriteLibrary.species_name(species_index))
+	_check(total_unique_frames == 15, "production manifest contains exactly the approved 15 frames")
+
+	var controller := GardenControllerScript.new() as GardenController
+	var layer := Node2D.new()
+	layer.name = "Creatures"
+	controller.add_child(layer)
+	root.add_child(controller)
+	await process_frame
+	_check(controller.set_visual_renderer(ProcessCreature.RENDERER_COZY_MYSTIC), "controller enables Cozy Mystic after resource preflight")
+	var record := _proc(54321, 1723456789.25, null, 16_777_216)
+	var identity := Parser.identity_key(record)
+	controller.reconcile_processes([record])
+	await process_frame
+	var creature := controller.get_creature(identity)
+	_check(creature != null, "Cozy Mystic renderer receives the standard process record")
+	if creature == null:
+		controller.queue_free()
+		await process_frame
+		return
+	creature.position = Vector2(140.0, 160.0)
+	var cozy_visual := creature.get_node("CozyVisual") as CozyMysticVisual
+	var legacy_visual := creature.get_node("Visual") as CreatureVisual
+	_check(cozy_visual.visible and not legacy_visual.visible, "Cozy renderer swaps visuals without replacing the process node")
+	_check(cozy_visual.sprite_frames == SpriteLibrary.frames_for_species(creature.species), "creature uses the shared SpriteFrames for its stable species")
+	_check(cozy_visual.texture_filter == CanvasItem.TEXTURE_FILTER_NEAREST, "production sprite uses nearest-neighbor filtering")
+	var initial_frame := cozy_visual.frame
+	var initial_progress := cozy_visual.frame_progress
+	_check(controller.select_at(creature.get_visual_center_position()) == identity, "Cozy sprite hitbox selects its process")
+	_check(creature.is_selected and controller.get_selected_identity() == identity, "selection highlight stays on the same identity")
+	_check(controller.set_visual_renderer(ProcessCreature.RENDERER_LEGACY), "controller returns to LEGACY")
+	_check(
+		controller.get_creature(identity) == creature
+		and creature.is_selected
+		and creature.species == SpriteLibrary.species_for_identity(identity),
+		"renderer switch preserves creature, selection, and species identity"
+	)
+	_check(not cozy_visual.visible and legacy_visual.visible, "LEGACY renderer is restored")
+	_check(controller.set_visual_renderer(ProcessCreature.RENDERER_COZY_MYSTIC), "controller can switch back to Cozy Mystic")
+	_check(controller.get_creature(identity) == creature and creature.species == SpriteLibrary.species_for_identity(identity), "switching renderer preserves identity and species")
+	_check(cozy_visual.frame == initial_frame and is_equal_approx(cozy_visual.frame_progress, initial_progress), "renderer switch preserves sprite animation phase")
+	controller.reconcile_processes([_proc(54321, 1723456789.25, 85.0, 268_435_456)])
+	_check(controller.get_creature(identity) == creature, "metric update does not recreate a Cozy creature")
+	_check(creature.is_selected and creature.species == SpriteLibrary.species_for_identity(identity), "metric update preserves selection and art species")
+	creature.advance_simulation(1.0)
+	_check(cozy_visual.speed_scale > 0.82 and cozy_visual.speed_scale <= 1.67, "CPU activity adjusts bounded per-instance animation speed")
+	_check(cozy_visual.sprite_frames == SpriteLibrary.frames_for_species(creature.species), "activity does not replace shared SpriteFrames")
+	var peer_visual := CozyVisualScript.new() as CozyMysticVisual
+	root.add_child(peer_visual)
+	peer_visual.configure("pid:54322:create_time:1723456789.25", creature.species)
+	peer_visual.set_activity(0.0)
+	_check(peer_visual.sprite_frames == cozy_visual.sprite_frames, "different creatures reuse the same species SpriteFrames")
+	_check(
+		is_equal_approx(peer_visual.speed_scale, 0.82)
+		and cozy_visual.speed_scale > peer_visual.speed_scale,
+		"CPU playback speed is stored per creature, not on shared frames"
+	)
+	peer_visual.queue_free()
+	_check(controller.get_creature_count() == 1, "renderer changes do not duplicate process nodes")
+	controller.queue_free()
+	await process_frame
+
+
+func _test_habitat_layout() -> void:
+	_check(SpriteLibrary.load_all(), "habitat support metadata loads from Cozy Mystic frames")
+	for species in range(SpriteLibrary.SPECIES_COUNT):
+		var opaque_bounds := SpriteLibrary.opaque_bounds(species)
+		var bounds_cover_every_frame := opaque_bounds.has_area()
+		for frame_path in SpriteLibrary.frame_paths(species):
+			var frame_texture := load(frame_path) as Texture2D
+			if frame_texture == null:
+				bounds_cover_every_frame = false
+				continue
+			var frame_image := frame_texture.get_image()
+			var frame_used := frame_image.get_used_rect() if frame_image != null else Rect2i()
+			bounds_cover_every_frame = bounds_cover_every_frame and frame_used.has_area()
+			bounds_cover_every_frame = bounds_cover_every_frame and opaque_bounds.position.x <= frame_used.position.x
+			bounds_cover_every_frame = bounds_cover_every_frame and opaque_bounds.position.y <= frame_used.position.y
+			bounds_cover_every_frame = bounds_cover_every_frame and opaque_bounds.end.x >= frame_used.end.x
+			bounds_cover_every_frame = bounds_cover_every_frame and opaque_bounds.end.y >= frame_used.end.y
+		_check(bounds_cover_every_frame, "%s visual envelope includes every animated frame's opaque bounds" % SpriteLibrary.species_name(species))
+		var profiles := HabitatLayoutScript.profiles_for_species(species)
+		_check(not profiles.is_empty(), "%s has at least one eligible habitat" % SpriteLibrary.species_name(species))
+		for profile in profiles:
+			_check(profile["eligible_species"].has(species), "habitat %s explicitly allows its assigned species" % profile["id"])
+			_check(HabitatLayoutScript.candidate_positions(profile).size() > 0, "habitat %s provides usable anchor positions" % profile["id"])
+	var expected_kinds := {
+		SpriteLibrary.Species.WISP: [HabitatLayoutScript.Kind.AIR],
+		SpriteLibrary.Species.MOTH: [HabitatLayoutScript.Kind.AIR],
+		SpriteLibrary.Species.BEETLE: [HabitatLayoutScript.Kind.GROUND, HabitatLayoutScript.Kind.PERCH_LOW],
+		SpriteLibrary.Species.LARVA: [HabitatLayoutScript.Kind.GROUND],
+		SpriteLibrary.Species.CRYSTAL: [HabitatLayoutScript.Kind.GROUND, HabitatLayoutScript.Kind.PERCH_STABLE],
+		SpriteLibrary.Species.SPORE: [HabitatLayoutScript.Kind.FUNGAL_GROUND, HabitatLayoutScript.Kind.FUNGAL_PERCH],
+	}
+	for species in expected_kinds:
+		for profile in HabitatLayoutScript.profiles_for_species(species):
+			_check(expected_kinds[species].has(profile["kind"]), "%s never receives an incompatible habitat" % SpriteLibrary.species_name(species))
+		var placement := HabitatLayoutScript.choose_placement("species-support-%d" % species, species, [])
+		var selected_profile: Dictionary = placement["profile"]
+		if int(selected_profile["kind"]) == HabitatLayoutScript.Kind.AIR:
+			_check(
+				selected_profile["area"].has_point(placement["position"]),
+				"%s placement stays in its declared air region" % SpriteLibrary.species_name(species)
+			)
+		else:
+			_check(
+				is_equal_approx(
+					placement["position"].y,
+					HabitatLayoutScript.surface_y_at(selected_profile, placement["position"].x)
+				),
+				"%s placement is attached to its declared support surface" % SpriteLibrary.species_name(species)
+			)
+	var larva_profiles := HabitatLayoutScript.profiles_for_species(SpriteLibrary.Species.LARVA)
+	_check(
+		larva_profiles.all(func(profile: Dictionary) -> bool: return profile["kind"] != HabitatLayoutScript.Kind.AIR),
+		"Larva is never assigned to an air region"
+	)
+	var wisp_profiles := HabitatLayoutScript.profiles_for_species(SpriteLibrary.Species.WISP)
+	_check(
+		wisp_profiles.all(func(profile: Dictionary) -> bool: return profile["kind"] == HabitatLayoutScript.Kind.AIR),
+		"Wisp remains in the air habitat"
+	)
+	var stable_identity := "test-process|create-time:100.0"
+	var first := HabitatLayoutScript.choose_placement(stable_identity, SpriteLibrary.Species.LARVA, [])
+	var repeated := HabitatLayoutScript.choose_placement(stable_identity, SpriteLibrary.Species.LARVA, [])
+	_check(first["profile"]["id"] == repeated["profile"]["id"] and first["position"] == repeated["position"], "same identity receives a deterministic habitat and anchor")
+	var other := HabitatLayoutScript.choose_placement("test-process|create-time:101.0", SpriteLibrary.Species.LARVA, [])
+	_check(first["position"] != other["position"], "different identities do not automatically share the same empty anchor")
+	var obstacle := Vector2(10.0, 20.0)
+	var other_obstacle := Vector2(70.0, 90.0)
+	var placement_a := HabitatLayoutScript.choose_placement(stable_identity, SpriteLibrary.Species.LARVA, [obstacle, other_obstacle])
+	var placement_b := HabitatLayoutScript.choose_placement(stable_identity, SpriteLibrary.Species.LARVA, [other_obstacle, obstacle])
+	_check(placement_a["profile"]["id"] == placement_b["profile"]["id"] and placement_a["position"] == placement_b["position"], "occupied-position order does not change layout choice")
+	var larva_bounds_small := SpriteLibrary.visual_bounds_at(SpriteLibrary.Species.LARVA, Vector2(300.0, 298.0), true, 0.85)
+	var larva_bounds_large := SpriteLibrary.visual_bounds_at(SpriteLibrary.Species.LARVA, Vector2(300.0, 298.0), true, 1.35)
+	_check(SpriteLibrary.opaque_bounds(SpriteLibrary.Species.LARVA).has_area(), "species envelope uses measured opaque frame pixels")
+	_check(larva_bounds_large.size.x > larva_bounds_small.size.x, "RAM scale expands the visual occupancy envelope")
+	var visual_occupant: Array[Dictionary] = [{"identity": "fixture", "habitat_id": "ground_main", "supported": true, "bounds": larva_bounds_large}]
+	var aware_a := HabitatLayoutScript.choose_placement_with_envelopes("crowded-larva", SpriteLibrary.Species.LARVA, visual_occupant)
+	var aware_b := HabitatLayoutScript.choose_placement_with_envelopes("crowded-larva", SpriteLibrary.Species.LARVA, visual_occupant)
+	var aware_bounds: Rect2 = aware_a["bounds"]
+	_check(aware_a["position"] == aware_b["position"], "envelope-aware placement is deterministic for an identity")
+	_check(not aware_bounds.intersects(larva_bounds_large), "new terrestrial placement avoids an available opaque-body overlap")
+	var composition := HabitatLayoutScript.analyze_composition([
+		{"habitat_id": "ground_main", "supported": true, "bounds": Rect2(10.0, 10.0, 30.0, 30.0)},
+		{"habitat_id": "ground_main", "supported": false, "bounds": Rect2(25.0, 20.0, 30.0, 30.0)},
+	], [Rect2(0.0, 0.0, 80.0, 80.0)])
+	_check(composition["overlap_pairs"] == 1 and composition["overlap_area"] > 0.0, "composition diagnostics report overlapping visual envelopes")
+	_check(composition["unsupported"] == 1 and composition["potential_interface_intersections"] == 2, "composition diagnostics report unsupported and potentially interface-obscured occupants")
+	var capacity_estimates: Dictionary = composition["estimated_capacity_by_surface"]
+	var capacities_measured := capacity_estimates.size() == HabitatLayoutScript.all_profiles().size()
+	for capacity in capacity_estimates.values():
+		capacities_measured = capacities_measured and int(capacity) > 0
+	_check(capacities_measured, "composition capacity estimates use valid visual envelopes for each habitat")
+	_check(is_equal_approx(HabitatLayoutScript.surface_y_at(first["profile"], first["position"].x), first["position"].y), "supported anchor position lies on its declared surface")
+	_check(SpriteLibrary.opaque_bottom_extent(SpriteLibrary.Species.LARVA) > 0.0, "Larva support edge is measured from opaque sprite pixels")
+	_check(SpriteLibrary.support_offset(SpriteLibrary.Species.LARVA, 1.0) > 0.0, "Larva support offset converts sprite edge to logical pixels")
+	var air_profiles := HabitatLayoutScript.profiles_for_species(SpriteLibrary.Species.WISP)
+	var air_candidates := HabitatLayoutScript.candidate_positions(air_profiles[0])
+	var distinct_air_rows: Dictionary = {}
+	var air_candidates_repeat := HabitatLayoutScript.candidate_positions(air_profiles[0])
+	for candidate in air_candidates:
+		distinct_air_rows[snappedf(candidate.y, 0.01)] = true
+	_check(air_candidates.size() == HabitatLayoutScript.AIR_CANDIDATE_COUNT, "air habitat exposes the configured deterministic candidate count")
+	_check(distinct_air_rows.size() > 30, "air habitat candidates are dispersed instead of arranged in horizontal rows")
+	_check(air_candidates == air_candidates_repeat, "air candidate distribution is deterministic")
+	var air_candidates_stay_inside := true
+	for air_profile in air_profiles:
+		var region: Rect2 = air_profile["area"]
+		for candidate in HabitatLayoutScript.candidate_positions(air_profile):
+			air_candidates_stay_inside = air_candidates_stay_inside and region.has_point(candidate)
+	_check(air_candidates_stay_inside, "air candidates stay inside their habitat regions")
+	var support_profiles := HabitatLayoutScript.ledge_profiles()
+	var support_ids: Dictionary = {}
+	for profile in support_profiles:
+		support_ids[profile["id"]] = true
+		var structure := HabitatLayoutScript.structure_polygon(profile)
+		_check(structure.size() >= 4, "support structure %s has drawable geometry" % profile["id"])
+		var visible_surface: PackedVector2Array = profile["points"]
+		if profile["structure_style"] == "wall_shelf":
+			var shelf_polygon := HabitatLayoutScript.ledge_polygon(profile)
+			_check(shelf_polygon[0] == visible_surface[0] and shelf_polygon[1] == visible_surface[1], "wall shelf %s draws its habitat surface as the polygon top" % profile["id"])
+		elif profile["structure_style"] == "mineral_shelf":
+			_check(structure[1] == visible_surface[0] and structure[2] == visible_surface[1], "mineral shelf draws its habitat surface as the polygon top")
+		if profile["id"].begins_with("root_perch_"):
+			var foot_points := HabitatLayoutScript.support_foot_points(profile)
+			var twigs := HabitatLayoutScript.root_branch_twigs(profile)
+			_check(foot_points.size() == 2 and twigs.size() == 2, "root perch %s visibly connects its support to the ground" % profile["id"])
+			for foot in foot_points:
+				_check(is_equal_approx(foot.y, HabitatLayoutScript.ground_surface_y(foot.x)), "root perch foot meets the shared ground contour")
+	_check(support_profiles.size() == 5, "environment includes wall, root and mineral support structures")
+	_check(not support_ids.has("stable_perch_west") and not support_ids.has("stable_perch_east"), "legacy stable aliases do not duplicate visible structures")
+	var fungal_perches := HabitatLayoutScript.mushroom_profiles()
+	_check(fungal_perches.size() == 6, "six fungal platforms are available for Spore placement")
+	var ground_banks := HabitatLayoutScript.ground_bank_profiles()
+	_check(ground_banks.size() == 4, "four natural ground rises provide additional low support surfaces")
+	var ground_bank_geometry_matches := true
+	for bank in ground_banks:
+		var bank_polygon := HabitatLayoutScript.ground_bank_polygon(bank)
+		var bank_surface: PackedVector2Array = bank["points"]
+		for point_index in range(bank_surface.size()):
+			ground_bank_geometry_matches = ground_bank_geometry_matches and bank_polygon[point_index] == bank_surface[point_index]
+		ground_bank_geometry_matches = ground_bank_geometry_matches and is_equal_approx(bank_polygon[bank_polygon.size() - 2].y, HabitatLayoutScript.ground_surface_y(bank_surface[bank_surface.size() - 1].x))
+		ground_bank_geometry_matches = ground_bank_geometry_matches and is_equal_approx(bank_polygon[bank_polygon.size() - 1].y, HabitatLayoutScript.ground_surface_y(bank_surface[0].x))
+		_check(bank["eligible_species"].has(SpriteLibrary.Species.LARVA), "Larva can use grounded terrain rises without receiving a perch or air habitat")
+	_check(ground_bank_geometry_matches, "drawn ground-rise polygons preserve their exact modeled support surfaces")
+	for fungal_profile in fungal_perches:
+		var mushroom_center: Vector2 = fungal_profile["mushroom_center"]
+		_check(is_equal_approx(mushroom_center.y, HabitatLayoutScript.ground_surface_y(mushroom_center.x)), "mushroom %s is rooted at the ground contour" % fungal_profile["id"])
+		var cap_polygon := HabitatLayoutScript.mushroom_cap_polygon(fungal_profile)
+		var support_points: PackedVector2Array = fungal_profile["points"]
+		_check(
+			cap_polygon[2] == support_points[0] and cap_polygon[3] == support_points[1],
+			"mushroom %s uses its drawn flat crown as the Spore support" % fungal_profile["id"]
+		)
+		var stem := HabitatLayoutScript.mushroom_stem_rect(fungal_profile)
+		_check(is_equal_approx(stem.end.y, mushroom_center.y), "mushroom %s stem reaches the ground contour" % fungal_profile["id"])
+	var controller := GardenControllerScript.new() as GardenController
+	var creature_layer := Node2D.new()
+	creature_layer.name = "Creatures"
+	controller.add_child(creature_layer)
+	root.add_child(controller)
+	await process_frame
+	var records: Array[Dictionary] = []
+	for pid in range(100, 180):
+		records.append(_proc(pid, 2_000.0 + float(pid), float(pid % 10) * 4.0))
+	controller.reconcile_processes(records)
+	await process_frame
+	_check(controller.get_creature_count() <= 30, "habitat placement preserves the 30-creature cap")
+	var composition_metrics := controller.get_composition_metrics()
+	_check(composition_metrics["count"] <= 30, "composition metrics include represented organisms within the cap")
+	_check(composition_metrics["unsupported"] == 0, "composition metrics find no unsupported REAL/DEMO habitat occupants")
+	_check(composition_metrics.has("estimated_capacity_by_surface") and composition_metrics.has("saturated_surfaces"), "composition metrics include per-surface estimated capacity and saturation")
+	var positions_before: Dictionary = {}
+	var all_supported := true
+	for identity in controller.get_creature_identities():
+		var represented := controller.get_creature(identity)
+		positions_before[identity] = represented.position
+		var allowed := HabitatLayoutScript.profiles_for_species(represented.species)
+		var habitat_allowed := false
+		for profile in allowed:
+			if profile["id"] == represented.habitat_id:
+				habitat_allowed = true
+				var placement_is_on_surface := false
+				if profile["kind"] == HabitatLayoutScript.Kind.AIR:
+					var air_area: Rect2 = profile["area"]
+					placement_is_on_surface = air_area.has_point(represented.position)
+				else:
+					placement_is_on_surface = is_equal_approx(
+						represented.position.y,
+						HabitatLayoutScript.surface_y_at(profile, represented.position.x)
+					)
+				all_supported = all_supported and placement_is_on_surface
+		all_supported = all_supported and habitat_allowed
+	_check(all_supported, "all REAL/DEMO-created creatures use an eligible habitat anchor")
+	var identity_order := controller.get_creature_identities()
+	var habitats_before: Dictionary = {}
+	for identity in identity_order:
+		habitats_before[identity] = controller.get_creature(identity).habitat_id
+	var reversed_records := records.duplicate()
+	reversed_records.reverse()
+	controller.reconcile_processes(reversed_records)
+	var positions_stable := true
+	for identity in identity_order:
+		var represented := controller.get_creature(identity)
+		positions_stable = positions_stable and represented.position == positions_before[identity] and represented.habitat_id == habitats_before[identity]
+	_check(positions_stable, "snapshot order changes do not redistribute persistent creatures")
+	var selected_identity := identity_order[0]
+	var selected_creature := controller.get_creature(selected_identity)
+	controller.select_at(selected_creature.get_visual_center_position())
+	_check(controller.get_selected_identity() == selected_identity, "habitat-aware sprite position remains selectable")
+	var selected_position := selected_creature.position
+	_check(controller.set_visual_renderer(ProcessCreature.RENDERER_COZY_MYSTIC), "habitat garden switches to the Cozy renderer")
+	_check(controller.get_creature(selected_identity) == selected_creature and selected_creature.position == selected_position and controller.get_selected_identity() == selected_identity, "renderer switch preserves identity, habitat position, and selection")
+	controller.queue_free()
+	await process_frame
+
+	var occupied: Array[Vector2] = []
+	var anchor_positions: Dictionary = {}
+	for index in range(60):
+		var identity := "saturated-larva-%03d" % index
+		var placement := HabitatLayoutScript.choose_placement(identity, SpriteLibrary.Species.LARVA, occupied)
+		_check(placement["profile"]["kind"] == HabitatLayoutScript.Kind.GROUND, "saturated Larva remains supported")
+		occupied.append(placement["position"])
+		anchor_positions["%.3f|%.3f" % [placement["position"].x, placement["position"].y]] = true
+	_check(anchor_positions.size() == 60, "layout saturation stress fixture still resolves 60 distinct ground anchors")
+
+	var creature := CreatureScene.instantiate() as ProcessCreature
+	root.add_child(creature)
+	await process_frame
+	creature.set_process_record(_proc(8811, 100.0, 0.0), "habitat-test|100.0")
+	creature.configure_habitat(first["profile"], first["position"])
+	creature.state = ProcessCreature.State.IDLE
+	creature._pause_remaining = 0.0
+	for _step in range(120):
+		creature.advance_simulation(1.0 / 60.0)
+	var expected_y := HabitatLayoutScript.surface_y_at(creature.habitat_profile, creature.position.x)
+	_check(is_equal_approx(creature.position.y, expected_y), "ground movement follows its support surface without flying")
+	_check(creature.position.x >= creature.habitat_profile["range_x"].x and creature.position.x <= creature.habitat_profile["range_x"].y, "ground movement stays within its assigned segment")
+	_check(is_equal_approx(creature.get_float_offset(), 0.0), "supported creatures do not use free-flight bobbing")
+	creature.queue_free()
+	await process_frame
+
+
+func _test_creature_design_preview() -> void:
+	var identity := Parser.identity_key(_proc(314, 1700.0, 0.0))
+	var species_before := CreatureVisualScript.species_for_identity(identity)
+	var wisp := CreatureVisualScript.new() as CreatureVisual
+	wisp.set_species(CreatureVisualScript.Species.WISP)
+	_check(
+		not wisp.is_design_v2() and not wisp.contains_body_point(Vector2(0.0, 15.0)),
+		"Wisp current style keeps its existing body geometry and hitbox"
+	)
+	wisp.configure_design_preview(true)
+	_check(
+		wisp.is_design_v2() and wisp.contains_body_point(Vector2(0.0, 15.0)),
+		"Wisp v2 preview hitbox covers its extended teardrop body"
+	)
+	wisp.configure_design_preview(true, true)
+	_check(
+		wisp.is_silhouette_preview() and wisp.contains_body_point(Vector2(0.0, 15.0)),
+		"Wisp monochrome preview keeps the v2 silhouette hitbox"
+	)
+	_check(
+		CreatureVisualScript.species_for_identity(identity) == species_before,
+		"preview style does not change deterministic process species identity"
+	)
+
+	var beetle := CreatureVisualScript.new() as CreatureVisual
+	beetle.set_species(CreatureVisualScript.Species.BEETLE)
+	_check(
+		not beetle.contains_body_point(Vector2(17.0, 0.0)),
+		"Beetle current style keeps its existing shell hitbox"
+	)
+	beetle.configure_design_preview(true)
+	_check(
+		beetle.is_design_v2() and beetle.contains_body_point(Vector2(17.0, 0.0)),
+		"Beetle v2 preview hitbox covers its wider carapace"
+	)
+	var spore := CreatureVisualScript.new() as CreatureVisual
+	spore.set_species(CreatureVisualScript.Species.SPORE)
+	spore.configure_design_preview(true)
+	_check(
+		not spore.is_design_v2() and spore.species == CreatureVisualScript.Species.SPORE,
+		"v2 prototype option does not alter Spore or other production species"
+	)
+	wisp.free()
+	beetle.free()
+	spore.free()
+
+	var preview_node: Node = CreatureDesignPreviewScene.instantiate()
+	if not is_instance_valid(preview_node):
+		_check(false, "comparison scene instantiates before its samples are inspected")
+		return
+	var preview := preview_node as CreatureDesignPreview
+	if not is_instance_valid(preview):
+		_check(false, "comparison scene exposes the preview controller")
+		_release_test_node(preview_node)
+		return
+	root.add_child(preview)
+	await process_frame
+	_check(preview.get_preview_sample_count() == 12, "comparison scene renders four designs in three views")
+	_check(
+		preview.get_animated_sample_count() == 2,
+		"only the two game-scale v2 samples animate in the comparison scene"
+	)
+	var monochrome_count := 0
+	var valid_children := true
+	for child in preview.get_children():
+		var visual := child as CreatureVisual
+		valid_children = valid_children and visual != null
+		if visual != null and visual.is_silhouette_preview():
+			monochrome_count += 1
+	_check(valid_children, "preview contains only isolated creature visual samples")
+	_check(monochrome_count == 4, "comparison includes monochrome silhouettes for both designs")
+	preview.queue_free()
 	await process_frame
 
 
@@ -194,6 +611,17 @@ func _test_environment_ambience() -> void:
 		"environment remains behind the selectable creature layer"
 	)
 	_check(first.get_ambient_particle_count() == 18, "environment uses a bounded fixed ambient particle count")
+	_check(first.get_habitat_ground_points() == HabitatLayoutScript.ground_surface_points(), "ground art and support model share the same surface points")
+	var environment_supports := first.get_habitat_ledge_profiles()
+	_check(environment_supports.size() == 5, "environment draws every modeled wall, root and mineral support")
+	var all_drawable_supports := true
+	for support in environment_supports:
+		all_drawable_supports = all_drawable_supports and HabitatLayoutScript.structure_polygon(support).size() >= 4
+	_check(all_drawable_supports, "all visible support surfaces expose matching habitat geometry")
+	_check(not first.show_habitat_debug, "habitat anchors are hidden in normal rendering")
+	first.set_habitat_debug_visible(true)
+	_check(first.show_habitat_debug, "habitat debug overlay can be enabled explicitly")
+	first.set_habitat_debug_visible(false)
 	_check(first.get_ambient_particle_count() <= 24, "ambient decoration remains below its configured cap")
 	_check(first.get_child_count() == 0, "ambient particles do not create interactive scene nodes")
 	var first_positions := first.get_ambient_particle_positions()
@@ -246,7 +674,7 @@ func _test_process_selection() -> void:
 	for pid in range(75):
 		many.append(_proc(pid + 1, 1000.0 + pid, float(pid % 10), 1024 + pid))
 	var selected := selector.select_processes(many, [], 60)
-	_check(selected.size() == 60, "selection enforces configured limit")
+	_check(selected.size() == 30, "selector enforces the hard 30-creature visual cap")
 	var reversed_many := many.duplicate()
 	reversed_many.reverse()
 	var reordered := selector.select_processes(reversed_many, [], 60)
@@ -278,6 +706,79 @@ func _test_process_selection() -> void:
 	var reused_pid := _proc(21, 2.0, 2.0, 1024)
 	var reused := selector.select_processes([reused_pid], [incumbent_key], 1)
 	_check(Parser.identity_key(reused[0]) != incumbent_key, "reused PID is selected as a new identity")
+
+
+func _test_visible_population_limit() -> void:
+	var selector := Selector.new()
+	var populations: Array[int] = [0, 1, 29, 30, 31, 50, 150, 300, 500]
+	for population in populations:
+		var monitored: Array[Dictionary] = []
+		for index in range(population):
+			monitored.append(_proc(index + 10, 10_000.0 + float(index), float(index % 7), 1024 + index))
+		var selected := selector.select_processes(monitored, [], 500)
+		var default_selected := selector.select_processes(monitored, [])
+		var reversed_monitored := monitored.duplicate()
+		reversed_monitored.reverse()
+		var reordered := selector.select_processes(reversed_monitored, [], 500)
+		var identities := _identities(selected)
+		var unique_identities: Dictionary = {}
+		for identity in identities:
+			unique_identities[identity] = true
+		var expected_visible := mini(population, Selector.MAX_VISIBLE_CREATURES)
+		_check(monitored.size() == population, "population %d remains fully monitored in the fixture" % population)
+		_check(selected.size() == expected_visible, "population %d represents min(population, 30) creatures" % population)
+		_check(default_selected.size() == expected_visible, "population %d respects the selector's 30-creature default" % population)
+		_check(identities.size() == unique_identities.size(), "population %d contains no duplicate represented identities" % population)
+		_check(identities == _identities(reordered), "population %d selection is deterministic across snapshot order" % population)
+		var identities_belong_to_snapshot := true
+		for process in selected:
+			identities_belong_to_snapshot = identities_belong_to_snapshot and monitored.any(
+				func(candidate: Dictionary) -> bool: return Parser.identity_key(candidate) == Parser.identity_key(process)
+			)
+		_check(identities_belong_to_snapshot, "population %d preserves selected PID/create_time identities" % population)
+		var registry := Registry.new()
+		var validated_snapshot := _validated(_snapshot(1, 1_700_000_000.0, "ok", monitored))
+		registry.accept_snapshot(validated_snapshot, 1_700_000_001.0, 1000)
+		_check(registry.get_tracked_count() == population, "population %d remains fully tracked in ProcessRegistry" % population)
+
+	var controller := GardenControllerScript.new() as GardenController
+	var creature_layer := Node2D.new()
+	creature_layer.name = "Creatures"
+	controller.add_child(creature_layer)
+	root.add_child(controller)
+	await process_frame
+	var full_snapshot: Array[Dictionary] = []
+	for index in range(31):
+		full_snapshot.append(_proc(index + 10, 20_000.0 + float(index), 0.0, 1024))
+	_check(controller.creature_limit == Selector.MAX_VISIBLE_CREATURES, "garden default visual limit is centrally set to 30")
+	controller.creature_limit = 500
+	controller.reconcile_processes(full_snapshot)
+	_check(full_snapshot.size() == 31, "controller receives all 31 monitored records without truncating source data")
+	_check(controller.get_creature_count() == 30, "controller cannot exceed the 30-creature cap when configured above it")
+	var retained: Dictionary = {}
+	for identity in controller.get_creature_identities():
+		var creature := controller.get_creature(identity)
+		retained[identity] = creature.get_instance_id()
+	var reduced_snapshot: Array[Dictionary] = []
+	for identity in controller.get_creature_identities().slice(0, 29):
+		for process in full_snapshot:
+			if Parser.identity_key(process) == identity:
+				reduced_snapshot.append(process)
+				break
+	controller.reconcile_processes(reduced_snapshot)
+	_check(controller.get_creature_count() <= 30, "31-to-29 population transition remains within cap during despawn")
+	for identity in controller.get_creature_identities():
+		if not reduced_snapshot.any(func(process: Dictionary) -> bool: return Parser.identity_key(process) == identity):
+			continue
+		var creature := controller.get_creature(identity)
+		_check(creature.get_instance_id() == int(retained[identity]), "surviving identity retains its creature instance when population falls")
+	for _frame in range(120):
+		if controller.get_creature_count() == 29:
+			break
+		await process_frame
+	_check(controller.get_creature_count() == 29, "completed despawn settles representation at the 29-process population")
+	controller.queue_free()
+	await process_frame
 
 
 func _identities(processes: Array[Dictionary]) -> Array[String]:
@@ -449,7 +950,7 @@ func _test_despawn_reuse_and_capacity() -> void:
 	controller.reconcile_processes([original])
 	var original_creature := controller.get_creature(original_identity)
 	_check(controller.get_creature_count() == 1, "initial selected identity spawns once")
-	controller.select_at(original_creature.position)
+	controller.select_at(original_creature.get_visual_center_position())
 	_check(controller.get_selected_identity() == original_identity, "selection stores process identity")
 	# A repeated valid snapshot preserves the same node and doesn't restart its birth animation.
 	var generation_before := original_creature._animation_generation
@@ -506,6 +1007,13 @@ func _test_separation_and_click_selection() -> void:
 	var first := controller.get_creature(identities[0])
 	var second := controller.get_creature(identities[1])
 	var third := controller.get_creature(identities[2])
+	# Isolate the generic pairwise separation test from habitat constraints.
+	# Supported-surface movement is verified in _test_habitat_layout.
+	for creature: ProcessCreature in [first, second, third]:
+		creature.habitat_profile.clear()
+		creature.habitat_id = ""
+		creature.habitat_kind = -1
+		creature.set_movement_bounds(Rect2(Vector2.ZERO, Vector2(640.0, 360.0)))
 	first.position = Vector2(100.0, 140.0)
 	second.position = Vector2(100.0, 140.0)
 	third.position = Vector2(200.0, 140.0)
@@ -556,9 +1064,9 @@ func _test_separation_and_click_selection() -> void:
 	first.position = Vector2(100.0, 140.0)
 	second.position = Vector2(200.0, 140.0)
 	third.position = Vector2(300.0, 140.0)
-	_check(controller.select_at(first.position) == identities[0], "click hit test selects a creature")
+	_check(controller.select_at(first.get_visual_center_position()) == identities[0], "click hit test selects a creature")
 	_check(first.is_selected, "selected creature receives visual highlight state")
-	_check(controller.select_at(second.position) == identities[1], "clicking another creature changes selection")
+	_check(controller.select_at(second.get_visual_center_position()) == identities[1], "clicking another creature changes selection")
 	_check(not first.is_selected and second.is_selected, "highlight moves to the new selection")
 	_check(controller.select_at(Vector2.ZERO).is_empty(), "empty-space click clears selection")
 
@@ -580,9 +1088,11 @@ func _test_separation_and_click_selection() -> void:
 	first.position = Vector2(320.0, 210.0)
 	second.position = first.position
 	third.position = Vector2(500.0, 210.0)
+	first._visual.position = Vector2.ZERO
+	second._visual.position = Vector2.ZERO
 	var visually_upper := first if first.get_index() > second.get_index() else second
 	_check(
-		controller.select_at(first.position) == visually_upper.process_identity,
+		controller.select_at(first.get_visual_center_position()) == visually_upper.process_identity,
 		"overlap selection follows the top draw-order tie break"
 	)
 	first.begin_despawn()
@@ -618,9 +1128,9 @@ func _test_click_routing_and_process_details() -> void:
 	root.add_child(main)
 	await process_frame
 	var garden := main.get_node("Garden") as GardenController
-	var records: Array[Dictionary] = [
-		_proc(71, 20.0, 12.5, 3_145_728), _proc(72, 21.0, null, 0)
-	]
+	var first_record := _proc(71, 20.0, 12.5, 3_145_728)
+	first_record["name"] = "process-name-that-is-longer-than-the-details-card"
+	var records: Array[Dictionary] = [first_record, _proc(72, 21.0, null, 0)]
 	garden.reconcile_processes(records)
 	var identities := garden.get_creature_identities()
 	if identities.size() != records.size():
@@ -651,18 +1161,39 @@ func _test_click_routing_and_process_details() -> void:
 		"synthetic click target is visible and eligible after its spawn animation"
 	)
 	var point_to_viewport := garden.get_global_transform_with_canvas()
-	var first_click := point_to_viewport * first.position
+	var first_click := point_to_viewport * first.get_visual_center_position()
 	await _send_left_click(first_click)
 	_check(garden.get_selected_identity() == identities[0], "viewport coordinates select the expected identity")
 	_check(main.mouse_filter == Control.MOUSE_FILTER_IGNORE, "full-screen root does not consume pointer input")
 	var details_panel := main.get_node("ProcessDetails") as Control
 	_check(details_panel.visible, "selecting a creature opens the details panel")
+	_check(
+		details_panel.mouse_filter == Control.MOUSE_FILTER_STOP,
+		"visible details card consumes pointer input instead of clicking through"
+	)
+	var name_label := main.get("_details_name_label") as Label
+	_check(
+		name_label.text.length() <= 26 and name_label.tooltip_text == first_record["name"],
+		"long process names fit the details card and retain the full name as a tooltip"
+	)
+	var identity_label := main.get("_details_pid_label") as Label
+	_check(
+		identity_label.text.contains(first.get_species_name()) and identity_label.text.contains("PID 71"),
+		"details identify the visual species and process PID"
+	)
 	var metrics_label := main.get("_details_metrics_label") as Label
 	_check(
 		metrics_label.text.contains("CPU 12.5%")
 		and metrics_label.text.contains("RAM 3.0 MiB"),
 		"panel shows current CPU and RAM values"
 	)
+	var second_click := point_to_viewport * second.get_visual_center_position()
+	await _send_left_click(second_click)
+	_check(
+		metrics_label.text.contains("CPU —") and metrics_label.text.contains("RAM 0.0 MiB"),
+		"null CPU stays unavailable in the observation card"
+	)
+	await _send_left_click(first_click)
 	var panel_click := details_panel.get_global_rect().get_center()
 	await _send_left_click(panel_click)
 	_check(
@@ -672,7 +1203,7 @@ func _test_click_routing_and_process_details() -> void:
 	_check(garden.get_selected_identity() == identities[0], "panel click preserves selection")
 	garden.position = Vector2(8.0, 6.0)
 	garden.scale = Vector2(1.25, 1.25)
-	var resized_click := garden.get_global_transform_with_canvas() * second.position
+	var resized_click := garden.get_global_transform_with_canvas() * second.get_visual_center_position()
 	await _send_left_click(resized_click)
 	_check(
 		garden.get_selected_identity() == identities[1],
@@ -694,12 +1225,46 @@ func _test_click_routing_and_process_details() -> void:
 	var selected_is_valid := is_instance_valid(selected_creature)
 	_check(selected_is_valid, "selected identity resolves to a creature after metrics update")
 	if selected_is_valid:
-		_check(selected_creature.contains_local_point(Vector2.ZERO), "selected creature remains hit-testable after metrics update")
+		_check(
+			selected_creature.species == SpriteLibrary.Species.BEETLE,
+			"metrics-update hit-test fixture exercises a supported Beetle habitat"
+		)
+		var initial_ram_scale := selected_creature.get_ram_scale()
+		var ram_scale_responded := false
+		for _frame in range(30):
+			if not is_instance_valid(selected_creature):
+				break
+			await process_frame
+			if not is_instance_valid(selected_creature):
+				break
+			if not is_equal_approx(selected_creature.get_ram_scale(), initial_ram_scale):
+				ram_scale_responded = true
+				break
+		_check(ram_scale_responded, "RAM scale responds to the updated process metrics")
+		selected_is_valid = is_instance_valid(selected_creature) and selected_creature.is_inside_tree()
+		_check(selected_is_valid, "selected creature remains present while RAM scale responds to updated metrics")
+		if selected_is_valid:
+			var visual_center_in_parent := selected_creature.get_visual_center_position()
+			var parent_node := selected_creature.get_parent() as Node2D
+			var visual_center_in_global := parent_node.to_global(visual_center_in_parent)
+			var visual_center_in_creature := selected_creature.to_local(visual_center_in_global)
+			_check(
+				selected_creature.contains_local_point(visual_center_in_creature),
+				"selected creature remains hit-testable at its rendered body after metrics update"
+			)
+			var visual_center_in_garden := garden.to_local(visual_center_in_global)
+			_check(
+				garden.select_at(visual_center_in_garden) == identities[0],
+				"updated creature remains selectable through the garden hit-test"
+			)
 	var registry: ProcessRegistry = main.get("_registry")
 	registry.connection_state = ProcessRegistry.STATE_DISCONNECTED
 	main.call("_refresh_details")
 	var state_label := main.get("_details_state_label") as Label
-	_check(state_label.text.contains("OFFLINE") and state_label.text.contains("last valid"), "offline panel marks metrics as stale")
+	_check(
+		state_label.text.contains("OFFLINE") and state_label.text.contains("LAST VALID METRICS"),
+		"offline panel marks metrics as stale"
+	)
 	var selected_identity := garden.get_selected_identity()
 	registry.connection_state = ProcessRegistry.STATE_CONNECTED
 	main.call("_refresh_details")
@@ -709,6 +1274,10 @@ func _test_click_routing_and_process_details() -> void:
 		"reconnection keeps selection and returns the detail status to live"
 	)
 	var close_button := details_panel.find_child("CloseDetails", true, false) as Button
+	_check(
+		close_button.focus_mode == Control.FOCUS_ALL,
+		"details close control can receive keyboard focus"
+	)
 	await _send_left_click(close_button.get_global_rect().get_center())
 	_check(garden.get_selected_identity().is_empty(), "details close button receives real GUI input")
 	_check(not details_panel.visible, "closing details does not select a creature behind the panel")
@@ -717,6 +1286,62 @@ func _test_click_routing_and_process_details() -> void:
 	_check(garden.get_selected_identity().is_empty(), "empty garden click clears selection")
 	_check(not details_panel.visible, "clearing selection hides the details panel")
 	main.call("_on_close_details_pressed")
+	main.queue_free()
+	await process_frame
+
+
+func _test_observatory_ui_states_and_demo_controls() -> void:
+	var main := MainScene.instantiate() as Control
+	var client := main.get_node("SnapshotClient") as SnapshotClient
+	client.set_polling_enabled(false)
+	root.add_child(main)
+	await process_frame
+	var registry := main.get("_registry") as ProcessRegistry
+	var status_label := main.get("_status_label") as Label
+	var counts_label := main.get("_counts_label") as Label
+	var message_label := main.get("_error_label") as Label
+	var empty_label := main.get("_empty_state_label") as Label
+	var demo_controls := main.get("_demo_controls") as HBoxContainer
+	_check(
+		status_label.text.contains("CONNECTING") and empty_label.visible,
+		"REAL startup communicates the connecting and empty-garden states"
+	)
+	_check(not demo_controls.visible, "DEMO-only scenario controls stay hidden in REAL mode")
+
+	var valid := Parser.validate_data(
+		_snapshot(1, Time.get_unix_time_from_system(), "ok", [_proc(91, 10.0, null, 0)])
+	)
+	main.call("_on_snapshot_received", valid["snapshot"])
+	_check(status_label.text.contains("CONNECTED"), "valid REAL snapshot updates the status to connected")
+	_check(counts_label.text.contains("1 monitored"), "REAL header reports the monitored process count")
+	_check(not empty_label.visible, "a represented process hides the empty-garden message")
+
+	registry._snapshot_age_at_receipt = 6.5
+	registry._last_new_snapshot_ticks_msec = Time.get_ticks_msec()
+	main.call("_refresh_status")
+	_check(
+		status_label.text.contains("STALE") and message_label.text.contains("last valid data"),
+		"STALE status explains that the last valid snapshot remains visible"
+	)
+	registry._snapshot_age_at_receipt = 16.0
+	registry._last_new_snapshot_ticks_msec = Time.get_ticks_msec()
+	main.call("_refresh_status")
+	_check(
+		status_label.text.contains("DISCONNECTED")
+		and message_label.text.contains("retrying automatically"),
+		"DISCONNECTED status communicates automatic recovery"
+	)
+
+	main.call("set_source_mode", "DEMO")
+	_check(demo_controls.visible, "DEMO scenario and seed controls appear only in DEMO mode")
+	_check(
+		status_label.text.contains("DEMO · SIMULATED") and counts_label.text.contains("simulated"),
+		"DEMO mode labels synthetic metrics and process counts explicitly"
+	)
+	_check(message_label.text.is_empty(), "DEMO mode clears REAL collector availability messages")
+	main.call("set_source_mode", "REAL")
+	_check(not demo_controls.visible, "returning to REAL hides DEMO-only controls")
+	_check(empty_label.visible, "source reset restores the empty-garden message")
 	main.queue_free()
 	await process_frame
 
@@ -905,6 +1530,29 @@ func _test_demo_mode_switching() -> void:
 		(main.get("_registry") as ProcessRegistry).get_tracked_count() == 300,
 		"demo scenario selector restarts with the selected population"
 	)
+	_check(
+		garden.get_creature_count() == 30,
+		"300-process demo remains fully tracked while representation stays capped at 30"
+	)
+	var counts_label := main.get("_counts_label") as Label
+	_check(
+		counts_label.text == "300 simulated · 30 represented",
+		"300-process demo HUD reports monitored and represented counts separately"
+	)
+	for scenario_index in [0, 3]:
+		scenario_option.select(scenario_index)
+		scenario_option.item_selected.emit(scenario_index)
+		var expected_population := 50 if scenario_index == 0 else 500
+		var scenario_registry := main.get("_registry") as ProcessRegistry
+		_check(
+			scenario_registry.get_tracked_count() == expected_population
+			and garden.get_creature_count() == 30,
+			"%d-process demo tracks every process and represents 30" % expected_population
+		)
+		_check(
+			counts_label.text == "%d simulated · 30 represented" % expected_population,
+			"%d-process demo HUD preserves full monitored count" % expected_population
+		)
 	scenario_option.select(1)
 	scenario_option.item_selected.emit(1)
 	var seed_input := main.find_child("DemoSeed", true, false) as SpinBox
@@ -915,7 +1563,11 @@ func _test_demo_mode_switching() -> void:
 	var status_label := main.get("_status_label") as Label
 	_check(status_label.text.contains("DEMO · SIMULATED"), "header clearly marks simulated data")
 	_check(demo_registry.get_tracked_count() == 150, "demo feeds its snapshot through ProcessRegistry")
-	_check(garden.get_creature_count() <= 60, "demo preserves the garden creature limit")
+	_check(garden.get_creature_count() == 30, "150-process demo represents exactly the 30-creature cap")
+	_check(
+		counts_label.text == "150 simulated · 30 represented",
+		"demo HUD distinguishes the complete monitored population from the visual limit"
+	)
 	if demo_records.is_empty():
 		_check(false, "demo mode provides synthetic process records")
 		main.queue_free()
@@ -980,10 +1632,10 @@ func _test_demo_mode_switching() -> void:
 		var active_registry: ProcessRegistry = main.get("_registry")
 		maximum_creatures = maxi(maximum_creatures, garden.get_creature_count())
 		_check(
-			active_registry.get_tracked_count() == 150 and garden.get_creature_count() <= 60,
+			active_registry.get_tracked_count() == 150 and garden.get_creature_count() <= 30,
 			"source switch %d restores demo within the creature limit" % cycle
 		)
-	_check(maximum_creatures <= 60, "repeated source changes never exceed the creature limit")
+	_check(maximum_creatures <= 30, "repeated source changes never exceed the 30-creature visual limit")
 	mode_option.select(0)
 	mode_option.item_selected.emit(0)
 	main.queue_free()

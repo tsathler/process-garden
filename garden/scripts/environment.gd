@@ -1,6 +1,7 @@
 extends Node2D
 class_name CaveEnvironment
 
+const HabitatLayout = preload("res://scripts/habitat_layout.gd")
 const FIELD_SIZE := Vector2(640.0, 360.0)
 const PARTICLE_COUNT := 18
 const PARTICLE_SEED := 20_250
@@ -19,12 +20,23 @@ const PAINTER_ORDER := [
 
 var _ambient_time := 0.0
 var _redraw_accumulator := 0.0
+@export var show_habitat_debug := false
 var _particle_origins: Array[Vector2] = []
 var _particle_phases: Array[float] = []
 var _particle_speeds: Array[float] = []
+var _ground_points := PackedVector2Array()
+var _habitat_profiles: Array[Dictionary] = []
+var _support_profiles: Array[Dictionary] = []
+var _mushroom_profiles: Array[Dictionary] = []
+var _ground_bank_profiles: Array[Dictionary] = []
 
 
 func _ready() -> void:
+	_ground_points = HabitatLayout.ground_surface_points()
+	_habitat_profiles = HabitatLayout.all_profiles()
+	_support_profiles = HabitatLayout.ledge_profiles()
+	_mushroom_profiles = HabitatLayout.mushroom_profiles()
+	_ground_bank_profiles = HabitatLayout.ground_bank_profiles()
 	_seed_particles()
 	set_process(true)
 
@@ -63,6 +75,21 @@ func get_painter_order() -> PackedStringArray:
 	return PackedStringArray(PAINTER_ORDER)
 
 
+func get_habitat_ground_points() -> PackedVector2Array:
+	return _ground_points.duplicate()
+
+
+func get_habitat_ledge_profiles() -> Array[Dictionary]:
+	return _support_profiles.duplicate()
+
+
+func set_habitat_debug_visible(value: bool) -> void:
+	if show_habitat_debug == value:
+		return
+	show_habitat_debug = value
+	queue_redraw()
+
+
 func _seed_particles() -> void:
 	var random := RandomNumberGenerator.new()
 	random.seed = PARTICLE_SEED
@@ -81,6 +108,8 @@ func _draw() -> void:
 	_draw_ground()
 	_draw_foreground_edges()
 	_draw_ambient()
+	if show_habitat_debug:
+		_draw_habitat_debug()
 
 
 func _draw_background() -> void:
@@ -117,12 +146,12 @@ func _draw_midground() -> void:
 		],
 		FAR_ROCK
 	)
-	_draw_ledge(Vector2(20, 236), 112.0, Color("#20283c"))
-	_draw_ledge(Vector2(506, 237), 114.0, Color("#20223a"))
-	_draw_mushroom(Vector2(82, 301), 1.2, Color("#53d9cb"))
-	_draw_mushroom(Vector2(546, 301), 1.65, Color("#65d9ad"))
-	_draw_mushroom(Vector2(445, 301), 0.72, Color("#9b9af0"))
-	_draw_mushroom(Vector2(204, 288), 0.52, Color("#57adc2"))
+	for index in range(_ground_bank_profiles.size()):
+		_draw_ground_bank(_ground_bank_profiles[index], index)
+	for profile in _support_profiles:
+		_draw_support_structure(profile)
+	for profile in _mushroom_profiles:
+		_draw_mushroom(profile, _mushroom_color(str(profile["id"])))
 	_draw_plant(Vector2(26, 307), 1.0, Color("#24564f"), Color("#4ec8ac"))
 	_draw_plant(Vector2(611, 308), 0.9, Color("#28574c"), Color("#6bd0b1"))
 	_draw_plant(Vector2(166, 312), 0.58, Color("#214b46"), Color("#4bb5a6"))
@@ -131,21 +160,27 @@ func _draw_midground() -> void:
 
 
 func _draw_ground() -> void:
-	_draw_polygon(
-		[
-			Vector2(0, 300), Vector2(61, 289), Vector2(126, 300), Vector2(194, 293),
-			Vector2(263, 302), Vector2(332, 291), Vector2(403, 300), Vector2(473, 292),
-			Vector2(543, 302), Vector2(640, 288), Vector2(640, 360), Vector2(0, 360),
-		],
-		SOIL
-	)
-	draw_line(Vector2(0, 302), Vector2(640, 302), SOIL_LIGHT, 2.0)
+	var fill_points := _ground_points.duplicate()
+	fill_points.append(Vector2(FIELD_SIZE.x, FIELD_SIZE.y))
+	fill_points.append(Vector2(0.0, FIELD_SIZE.y))
+	draw_colored_polygon(fill_points, SOIL)
+	draw_polyline(_ground_points, SOIL_LIGHT, 2.0, true)
+	_draw_moss_ribbons(_ground_points)
 	draw_line(Vector2(24, 306), Vector2(142, 306), Color("#22353a"), 1.0)
 	draw_line(Vector2(489, 305), Vector2(620, 303), Color("#263339"), 1.0)
 	for stone in [Vector2(118, 329), Vector2(251, 342), Vector2(386, 326), Vector2(570, 340)]:
 		draw_rect(Rect2(stone, Vector2(12, 4)), Color("#203038"))
 		draw_rect(Rect2(stone + Vector2(3, -2), Vector2(7, 2)), Color("#27353d"))
 	_draw_ground_reflections()
+
+
+func _draw_moss_ribbons(ground_points: PackedVector2Array) -> void:
+	# Ground contour remains the source of truth for these small moss marks.
+	for index: int in [2, 6, 10, 14, 17]:
+		var point := ground_points[index]
+		var moss_color := Color("#29483f") if index % 2 == 0 else Color("#30424d")
+		draw_line(point + Vector2(-8.0, 5.0), point + Vector2(0.0, 2.0), moss_color, 2.0, true)
+		draw_line(point + Vector2(1.0, 2.0), point + Vector2(8.0, 5.0), moss_color.lightened(0.08), 2.0, true)
 
 
 func _draw_foreground_edges() -> void:
@@ -168,26 +203,17 @@ func _draw_foreground_edges() -> void:
 	draw_line(Vector2(634, 350), Vector2(621, 337), Color("#305f5e"), 2.0)
 
 
-func _draw_mushroom(center: Vector2, size: float, glow: Color) -> void:
+func _draw_mushroom(profile: Dictionary, glow: Color) -> void:
+	var center: Vector2 = profile["mushroom_center"]
+	var size := float(profile["mushroom_size"])
 	var cap_center := center + Vector2(0, -16.0 * size)
 	_draw_soft_halo(cap_center, 16.0 * size, glow, 0.16)
-	draw_rect(
-		Rect2(center + Vector2(-2.5, -14.0) * size, Vector2(5.0, 14.0) * size),
-		Color("#35565a")
-	)
+	draw_rect(HabitatLayout.mushroom_stem_rect(profile), Color("#35565a"))
 	draw_rect(
 		Rect2(center + Vector2(-2.5, -14.0) * size, Vector2(2.0, 14.0) * size),
 		Color("#568987")
 	)
-	_draw_polygon(
-		[
-			center + Vector2(-13, -12) * size, center + Vector2(-10, -19) * size,
-			center + Vector2(-5, -23) * size, center + Vector2(5, -23) * size,
-			center + Vector2(11, -18) * size, center + Vector2(14, -11) * size,
-			center + Vector2(9, -9) * size, center + Vector2(-10, -9) * size,
-		],
-		glow.darkened(0.38)
-	)
+	draw_colored_polygon(HabitatLayout.mushroom_cap_polygon(profile), glow.darkened(0.38))
 	draw_rect(
 		Rect2(center + Vector2(-6, -17) * size, Vector2(4, 2) * size),
 		glow.lightened(0.2)
@@ -217,16 +243,69 @@ func _draw_plant(base: Vector2, size: float, color: Color, tip_color: Color) -> 
 	draw_line(right_tip, right_tip + Vector2(5, 3) * size, tip_color.darkened(0.2), 1.0)
 
 
-func _draw_ledge(origin: Vector2, width: float, color: Color) -> void:
-	_draw_polygon(
-		[
-			origin, origin + Vector2(18, -18), origin + Vector2(44, -11),
-			origin + Vector2(66, -24), origin + Vector2(width, -12),
-			origin + Vector2(width - 12, 0),
-		],
-		color
-	)
-	draw_line(origin + Vector2(20, -15), origin + Vector2(width - 20, -11), color.lightened(0.1))
+func _draw_support_structure(profile: Dictionary) -> void:
+	var identifier := str(profile["id"])
+	var style := str(profile.get("structure_style", "wall_shelf"))
+	var surface: PackedVector2Array = profile["points"]
+	var polygon := HabitatLayout.structure_polygon(profile)
+	match style:
+		"root_branch":
+			draw_colored_polygon(polygon, Color("#26363a"))
+			draw_polyline(surface, Color("#60786a"), 2.0, true)
+			for twig in HabitatLayout.root_branch_twigs(profile):
+				draw_line(twig[0], twig[1], Color("#344c45"), 4.0, true)
+				draw_line(twig[0], twig[1], Color("#49665b"), 1.0, true)
+			var branch_mid := (surface[0] + surface[1]) * 0.5
+			draw_line(branch_mid + Vector2(-12.0, 2.0), branch_mid + Vector2(-4.0, 1.0), Color("#30483f"), 2.0, true)
+			draw_line(branch_mid + Vector2(8.0, 1.0), branch_mid + Vector2(16.0, 2.0), Color("#30483f"), 2.0, true)
+			var glint_x := (surface[0].x + surface[1].x) * 0.5
+			_draw_soft_halo(Vector2(glint_x, surface[0].y - 2.0), 8.0, Color("#55c6a8"), 0.08)
+		"mineral_shelf":
+			draw_colored_polygon(polygon, Color("#283246"))
+			draw_polyline(surface, Color("#64758e"), 2.0, true)
+			draw_line(surface[0] + Vector2(10.0, 4.0), surface[1] + Vector2(-10.0, 4.0), Color("#3f6275"), 1.0, true)
+			draw_line(surface[0] + Vector2(26.0, 12.0), surface[0] + Vector2(38.0, 2.0), Color("#43566e"), 1.0, true)
+			draw_line(surface[1] + Vector2(-34.0, 3.0), surface[1] + Vector2(-23.0, 11.0), Color("#394e66"), 1.0, true)
+			_draw_soft_halo((surface[0] + surface[1]) * 0.5, 13.0, Color("#8bc9ec"), 0.07)
+		_:
+			var color := Color("#20283c") if identifier == "low_perch_west" else Color("#20223a")
+			draw_colored_polygon(polygon, color)
+			draw_line(surface[0], surface[1], color.lightened(0.16), 2.0, true)
+			var midpoint := (surface[0] + surface[1]) * 0.5
+			draw_line(midpoint + Vector2(-12.0, 6.0), midpoint + Vector2(-4.0, 5.0), color.lightened(0.11), 1.0, true)
+			draw_line(midpoint + Vector2(9.0, 6.0), midpoint + Vector2(16.0, 7.0), color.darkened(0.1), 1.0, true)
+			# Wall shelves visibly meet the cave edge through short stone supports.
+			var wall_x := 0.0 if identifier == "low_perch_west" else FIELD_SIZE.x
+			for point in surface:
+				draw_line(point + Vector2(0.0, 2.0), Vector2(wall_x, point.y + 9.0), color.darkened(0.12), 3.0, true)
+
+
+func _draw_ground_bank(profile: Dictionary, index: int) -> void:
+	var polygon := HabitatLayout.ground_bank_polygon(profile)
+	var surface: PackedVector2Array = profile["points"]
+	var body_color := Color("#1b2d31") if index % 2 == 0 else Color("#202a36")
+	draw_colored_polygon(polygon, body_color)
+	draw_polyline(surface, Color("#344d48"), 2.0, true)
+	var crest := surface[2] if surface.size() > 2 else surface[0]
+	draw_line(crest + Vector2(-10.0, 3.0), crest + Vector2(-2.0, 1.0), Color("#42675b"), 2.0, true)
+	draw_line(crest + Vector2(4.0, 2.0), crest + Vector2(12.0, 4.0), Color("#2f5149"), 2.0, true)
+	_draw_soft_halo(crest + Vector2(0.0, 2.0), 8.0, Color("#5cc9a9"), 0.035)
+
+
+func _mushroom_color(identifier: String) -> Color:
+	match identifier:
+		"fungal_perch_west":
+			return Color("#53d9cb")
+		"fungal_perch_east":
+			return Color("#65d9ad")
+		"fungal_perch_lilac":
+			return Color("#9b9af0")
+		"fungal_perch_center":
+			return Color("#a58ad4")
+		"fungal_perch_center_east":
+			return Color("#57c9c2")
+		_:
+			return Color("#57adc2")
 
 
 func _draw_wall_glimmers() -> void:
@@ -254,6 +333,17 @@ func _draw_ambient() -> void:
 		var color := Color(PARTICLE_COLOR, 0.12 + pulse * 0.16)
 		draw_circle(positions[index], 2.2, Color(color, color.a * 0.2))
 		draw_rect(Rect2(positions[index] - Vector2(0.5, 0.5), Vector2.ONE), color)
+
+
+func _draw_habitat_debug() -> void:
+	for profile in _habitat_profiles:
+		var color := HabitatLayout.debug_color(int(profile["kind"]))
+		if profile["kind"] == HabitatLayout.Kind.AIR:
+			draw_rect(profile["area"], Color(color, 0.1), false, 1.0)
+		else:
+			draw_polyline(profile["points"], Color(color, 0.8), 1.0, true)
+		for candidate in HabitatLayout.candidate_positions(profile):
+			draw_circle(candidate, 1.5, color)
 
 
 func _draw_soft_halo(center: Vector2, radius: float, color: Color, strength: float) -> void:

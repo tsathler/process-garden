@@ -5,6 +5,13 @@ const DemoSnapshotSourceScript = preload("res://scripts/demo_snapshot_source.gd"
 
 const SOURCE_REAL := "REAL"
 const SOURCE_DEMO := "DEMO"
+const COLOR_TEXT := Color("#f2f7fd")
+const COLOR_MUTED := Color("#91acc2")
+const COLOR_ACCENT := Color("#76e1d3")
+const COLOR_CONNECTED := Color("#91e9c7")
+const COLOR_STALE := Color("#e8c773")
+const COLOR_DISCONNECTED := Color("#e28c9c")
+const COLOR_WAITING := Color("#a9bfd0")
 
 var _registry: ProcessRegistry
 var _garden: GardenController
@@ -16,8 +23,10 @@ var _details_name_label: Label
 var _details_pid_label: Label
 var _details_metrics_label: Label
 var _details_state_label: Label
+var _empty_state_label: Label
 var _refresh_timer: Timer
 var _source_mode_option: OptionButton
+var _renderer_mode_option: OptionButton
 var _demo_controls: HBoxContainer
 var _demo_scenario_option: OptionButton
 var _demo_seed_input: SpinBox
@@ -28,6 +37,7 @@ var _demo_seed := 2025
 var _last_monitored_count := 0
 var _last_represented_count := 0
 var _last_connection_state := ""
+var _renderer_error := ""
 
 
 func _ready() -> void:
@@ -39,6 +49,9 @@ func _ready() -> void:
 	client.snapshot_received.connect(_on_snapshot_received)
 	client.request_failed.connect(_on_request_failed)
 	_build_overlay()
+	_renderer_mode_option.select(
+		1 if _garden.get_visual_renderer() == ProcessCreature.RENDERER_COZY_MYSTIC else 0
+	)
 	_refresh_timer = Timer.new()
 	_refresh_timer.wait_time = 0.25
 	_refresh_timer.timeout.connect(_refresh_status)
@@ -105,6 +118,20 @@ func _on_source_mode_selected(index: int) -> void:
 	set_source_mode(SOURCE_DEMO if _source_mode_option.get_item_id(index) == 1 else SOURCE_REAL)
 
 
+func _on_renderer_mode_selected(index: int) -> void:
+	var mode := (
+		ProcessCreature.RENDERER_COZY_MYSTIC
+		if _renderer_mode_option.get_item_id(index) == 1
+		else ProcessCreature.RENDERER_LEGACY
+	)
+	if not _garden.set_visual_renderer(mode):
+		_renderer_error = "Cozy Mystic assets unavailable · LEGACY renderer retained"
+		_renderer_mode_option.select(0)
+	else:
+		_renderer_error = ""
+	_refresh_status()
+
+
 func _on_demo_scenario_selected(index: int) -> void:
 	_demo_population = _demo_scenario_option.get_item_id(index)
 	_restart_demo_source()
@@ -140,22 +167,23 @@ func route_pointer_click(viewport_position: Vector2) -> bool:
 func _build_overlay() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	var panel := PanelContainer.new()
+	panel.name = "ObservatoryHeader"
 	panel.anchor_left = 0.02
 	panel.anchor_top = 0.025
 	panel.anchor_right = 0.98
-	panel.offset_bottom = 78.0
-	panel.add_theme_stylebox_override("panel", _make_panel_style())
+	panel.offset_bottom = 82.0
+	panel.add_theme_stylebox_override("panel", _make_panel_style(false))
 	add_child(panel)
 
 	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 12)
-	margin.add_theme_constant_override("margin_top", 7)
-	margin.add_theme_constant_override("margin_right", 12)
-	margin.add_theme_constant_override("margin_bottom", 7)
+	margin.add_theme_constant_override("margin_left", 13)
+	margin.add_theme_constant_override("margin_top", 8)
+	margin.add_theme_constant_override("margin_right", 13)
+	margin.add_theme_constant_override("margin_bottom", 8)
 	panel.add_child(margin)
 
 	var row := HBoxContainer.new()
-	row.add_theme_constant_override("separation", 16)
+	row.add_theme_constant_override("separation", 12)
 	margin.add_child(row)
 	var identity_column := VBoxContainer.new()
 	identity_column.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -163,13 +191,13 @@ func _build_overlay() -> void:
 	row.add_child(identity_column)
 	var title := Label.new()
 	title.text = "PROCESS GARDEN"
-	title.add_theme_font_size_override("font_size", 18)
-	title.add_theme_color_override("font_color", Color("#d5fff4"))
+	title.add_theme_font_size_override("font_size", 17)
+	title.add_theme_color_override("font_color", COLOR_TEXT)
 	identity_column.add_child(title)
 	var subtitle := Label.new()
-	subtitle.text = "SUBTERRANEAN DIGITAL ECOSYSTEM"
-	subtitle.add_theme_font_size_override("font_size", 9)
-	subtitle.add_theme_color_override("font_color", Color("#71969c"))
+	subtitle.text = "LIVING SYSTEM  ·  FIELD OBSERVATORY"
+	subtitle.add_theme_font_size_override("font_size", 10)
+	subtitle.add_theme_color_override("font_color", COLOR_MUTED)
 	identity_column.add_child(subtitle)
 
 	var status_column := VBoxContainer.new()
@@ -182,7 +210,7 @@ func _build_overlay() -> void:
 	_status_label = Label.new()
 	_status_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_status_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
-	_status_label.add_theme_font_size_override("font_size", 12)
+	_status_label.add_theme_font_size_override("font_size", 11)
 	connection_row.add_child(_status_label)
 	_source_mode_option = OptionButton.new()
 	_source_mode_option.name = "SourceMode"
@@ -190,8 +218,20 @@ func _build_overlay() -> void:
 	_source_mode_option.add_item("DEMO", 1)
 	_source_mode_option.select(0)
 	_source_mode_option.custom_minimum_size = Vector2(72.0, 24.0)
+	_source_mode_option.tooltip_text = "Choose live Windows processes or simulated demo data"
+	_style_control(_source_mode_option, true)
 	_source_mode_option.item_selected.connect(_on_source_mode_selected)
 	connection_row.add_child(_source_mode_option)
+	_renderer_mode_option = OptionButton.new()
+	_renderer_mode_option.name = "VisualRenderer"
+	_renderer_mode_option.add_item("LEGACY", 0)
+	_renderer_mode_option.add_item("COZY", 1)
+	_renderer_mode_option.select(0)
+	_renderer_mode_option.custom_minimum_size = Vector2(76.0, 24.0)
+	_renderer_mode_option.tooltip_text = "Compare the legacy visual with Cozy Mystic sprites"
+	_style_control(_renderer_mode_option, true)
+	_renderer_mode_option.item_selected.connect(_on_renderer_mode_selected)
+	connection_row.add_child(_renderer_mode_option)
 	var info_row := HBoxContainer.new()
 	info_row.add_theme_constant_override("separation", 5)
 	status_column.add_child(info_row)
@@ -199,7 +239,7 @@ func _build_overlay() -> void:
 	_counts_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_counts_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_counts_label.add_theme_font_size_override("font_size", 10)
-	_counts_label.add_theme_color_override("font_color", Color("#9bb7b6"))
+	_counts_label.add_theme_color_override("font_color", COLOR_MUTED)
 	info_row.add_child(_counts_label)
 	_demo_controls = HBoxContainer.new()
 	_demo_controls.name = "DemoSettings"
@@ -214,11 +254,14 @@ func _build_overlay() -> void:
 	_demo_scenario_option.add_item("500", 500)
 	_demo_scenario_option.select(1)
 	_demo_scenario_option.custom_minimum_size = Vector2(68.0, 22.0)
+	_demo_scenario_option.tooltip_text = "Number of simulated processes"
+	_style_control(_demo_scenario_option, true)
 	_demo_scenario_option.item_selected.connect(_on_demo_scenario_selected)
 	_demo_controls.add_child(_demo_scenario_option)
 	var seed_label := Label.new()
 	seed_label.text = "SEED"
 	seed_label.add_theme_font_size_override("font_size", 9)
+	seed_label.add_theme_color_override("font_color", COLOR_MUTED)
 	_demo_controls.add_child(seed_label)
 	_demo_seed_input = SpinBox.new()
 	_demo_seed_input.name = "DemoSeed"
@@ -227,6 +270,8 @@ func _build_overlay() -> void:
 	_demo_seed_input.step = 1.0
 	_demo_seed_input.value = _demo_seed
 	_demo_seed_input.custom_minimum_size = Vector2(76.0, 22.0)
+	_demo_seed_input.tooltip_text = "Repeat a demo scenario with the same seed"
+	_style_control(_demo_seed_input, false)
 	_demo_seed_input.value_changed.connect(_on_demo_seed_changed)
 	_demo_controls.add_child(_demo_seed_input)
 
@@ -237,9 +282,22 @@ func _build_overlay() -> void:
 	_error_label.anchor_bottom = 0.99
 	_error_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_error_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_error_label.add_theme_font_size_override("font_size", 9)
-	_error_label.add_theme_color_override("font_color", Color("#e7ad8b"))
+	_error_label.add_theme_font_size_override("font_size", 10)
+	_error_label.add_theme_color_override("font_color", COLOR_STALE)
 	add_child(_error_label)
+	_empty_state_label = Label.new()
+	_empty_state_label.name = "GardenEmptyState"
+	_empty_state_label.anchor_left = 0.18
+	_empty_state_label.anchor_top = 0.45
+	_empty_state_label.anchor_right = 0.82
+	_empty_state_label.anchor_bottom = 0.55
+	_empty_state_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_empty_state_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	_empty_state_label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_empty_state_label.add_theme_font_size_override("font_size", 12)
+	_empty_state_label.add_theme_color_override("font_color", COLOR_MUTED)
+	_empty_state_label.visible = false
+	add_child(_empty_state_label)
 	_build_details_panel()
 
 
@@ -247,23 +305,23 @@ func _build_details_panel() -> void:
 	_details_panel = PanelContainer.new()
 	_details_panel.name = "ProcessDetails"
 	_details_panel.mouse_filter = Control.MOUSE_FILTER_STOP
-	_details_panel.anchor_left = 0.67
-	_details_panel.anchor_top = 0.66
+	_details_panel.anchor_left = 0.63
+	_details_panel.anchor_top = 0.65
 	_details_panel.anchor_right = 0.98
 	_details_panel.anchor_bottom = 0.97
-	_details_panel.custom_minimum_size = Vector2(190.0, 104.0)
-	_details_panel.add_theme_stylebox_override("panel", _make_panel_style())
+	_details_panel.custom_minimum_size = Vector2(218.0, 118.0)
+	_details_panel.add_theme_stylebox_override("panel", _make_panel_style(true))
 	_details_panel.visible = false
 	add_child(_details_panel)
 
 	var margin := MarginContainer.new()
-	margin.add_theme_constant_override("margin_left", 9)
-	margin.add_theme_constant_override("margin_top", 7)
-	margin.add_theme_constant_override("margin_right", 7)
-	margin.add_theme_constant_override("margin_bottom", 7)
+	margin.add_theme_constant_override("margin_left", 11)
+	margin.add_theme_constant_override("margin_top", 9)
+	margin.add_theme_constant_override("margin_right", 9)
+	margin.add_theme_constant_override("margin_bottom", 8)
 	_details_panel.add_child(margin)
 	var column := VBoxContainer.new()
-	column.add_theme_constant_override("separation", 3)
+	column.add_theme_constant_override("separation", 4)
 	margin.add_child(column)
 
 	var title_row := HBoxContainer.new()
@@ -271,40 +329,76 @@ func _build_details_panel() -> void:
 	column.add_child(title_row)
 	_details_name_label = Label.new()
 	_details_name_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_details_name_label.add_theme_font_size_override("font_size", 13)
-	_details_name_label.add_theme_color_override("font_color", Color("#d5fff4"))
+	_details_name_label.add_theme_font_size_override("font_size", 14)
+	_details_name_label.add_theme_color_override("font_color", COLOR_TEXT)
+	_details_name_label.clip_text = true
 	title_row.add_child(_details_name_label)
 	var close_button := Button.new()
 	close_button.name = "CloseDetails"
 	close_button.text = "×"
 	close_button.tooltip_text = "Close process details"
-	close_button.focus_mode = Control.FOCUS_NONE
+	close_button.focus_mode = Control.FOCUS_ALL
 	close_button.custom_minimum_size = Vector2(22.0, 20.0)
 	close_button.add_theme_font_size_override("font_size", 14)
+	close_button.add_theme_color_override("font_color", COLOR_MUTED)
+	close_button.add_theme_color_override("font_hover_color", COLOR_TEXT)
+	_style_control(close_button, true)
 	close_button.pressed.connect(_on_close_details_pressed)
 	title_row.add_child(close_button)
 
 	_details_pid_label = Label.new()
 	_details_pid_label.add_theme_font_size_override("font_size", 10)
-	_details_pid_label.add_theme_color_override("font_color", Color("#9bb7b6"))
+	_details_pid_label.add_theme_color_override("font_color", COLOR_ACCENT)
 	column.add_child(_details_pid_label)
 	_details_metrics_label = Label.new()
 	_details_metrics_label.add_theme_font_size_override("font_size", 11)
-	_details_metrics_label.add_theme_color_override("font_color", Color("#c6dedd"))
+	_details_metrics_label.add_theme_color_override("font_color", COLOR_TEXT)
 	column.add_child(_details_metrics_label)
 	_details_state_label = Label.new()
 	_details_state_label.add_theme_font_size_override("font_size", 9)
-	_details_state_label.add_theme_color_override("font_color", Color("#7de0bf"))
+	_details_state_label.add_theme_color_override("font_color", COLOR_CONNECTED)
 	column.add_child(_details_state_label)
 
 
-func _make_panel_style() -> StyleBoxFlat:
+func _make_panel_style(elevated: bool) -> StyleBoxFlat:
 	var style := StyleBoxFlat.new()
-	style.bg_color = Color("#0b1222e8")
-	style.border_color = Color("#2b4e54")
+	style.bg_color = Color("#111b2ef2") if elevated else Color("#0b1020e8")
+	style.border_color = Color("#34516a")
 	style.set_border_width_all(1)
-	style.set_corner_radius_all(4)
+	style.set_corner_radius_all(3)
 	return style
+
+
+func _style_control(control: Control, button_like: bool) -> void:
+	var normal := StyleBoxFlat.new()
+	normal.bg_color = Color("#172740")
+	normal.border_color = Color("#34516a")
+	normal.set_border_width_all(1)
+	normal.set_corner_radius_all(2)
+	var hover := StyleBoxFlat.new()
+	hover.bg_color = Color("#203752")
+	hover.border_color = COLOR_ACCENT
+	hover.set_border_width_all(1)
+	hover.set_corner_radius_all(2)
+	var pressed := StyleBoxFlat.new()
+	pressed.bg_color = Color("#263f58")
+	pressed.border_color = COLOR_CONNECTED
+	pressed.set_border_width_all(1)
+	pressed.set_corner_radius_all(2)
+	var focus := StyleBoxFlat.new()
+	focus.bg_color = Color("#172740")
+	focus.border_color = COLOR_ACCENT
+	focus.set_border_width_all(1)
+	focus.set_corner_radius_all(2)
+	control.add_theme_stylebox_override("normal", normal)
+	control.add_theme_stylebox_override("hover", hover)
+	control.add_theme_stylebox_override("pressed", pressed)
+	control.add_theme_stylebox_override("focus", focus)
+	control.add_theme_color_override("font_color", COLOR_TEXT)
+	control.add_theme_color_override("font_hover_color", COLOR_TEXT)
+	control.add_theme_color_override("font_pressed_color", COLOR_TEXT)
+	if not button_like:
+		control.add_theme_color_override("font_placeholder_color", COLOR_MUTED)
 
 
 func _on_snapshot_received(snapshot: Dictionary) -> void:
@@ -348,30 +442,35 @@ func _refresh_status() -> void:
 	)
 	if _source_mode == SOURCE_DEMO:
 		_status_label.text = "DEMO · SIMULATED"
-		_status_label.add_theme_color_override("font_color", Color("#7de0bf"))
+		_set_label_color(_status_label, COLOR_CONNECTED)
 		_counts_label.text = "%d simulated · %d represented" % [
 			_last_monitored_count,
 			_last_represented_count,
 		]
-		_error_label.text = ""
+		_error_label.text = _renderer_error
+		_refresh_empty_state(ProcessRegistry.STATE_CONNECTED)
 		return
 	var freshness := "waiting for collector"
 	if state["has_snapshot"]:
 		freshness = "data %.1fs old" % state["age_seconds"]
-	var state_color := Color("#7de0bf")
+	var state_color := COLOR_CONNECTED
 	if state["state"] == ProcessRegistry.STATE_CONNECTING:
-		state_color = Color("#a3bac0")
+		state_color = COLOR_WAITING
 	elif state["state"] == ProcessRegistry.STATE_STALE:
-		state_color = Color("#e9be78")
+		state_color = COLOR_STALE
 	elif state["state"] == ProcessRegistry.STATE_DISCONNECTED:
-		state_color = Color("#df8f9d")
+		state_color = COLOR_DISCONNECTED
 	_status_label.text = "%s  ·  %s" % [str(state["state"]).to_upper(), freshness]
-	_status_label.add_theme_color_override("font_color", state_color)
+	_set_label_color(_status_label, state_color)
 	_counts_label.text = "%d monitored  ·  %d represented" % [
 		_last_monitored_count,
 		_last_represented_count,
 	]
-	_error_label.text = _registry.get_last_problem()
+	_error_label.text = (
+		_renderer_error if not _renderer_error.is_empty() else _connection_message(str(state["state"]))
+	)
+	_set_label_color(_error_label, state_color)
+	_refresh_empty_state(str(state["state"]))
 	if _last_connection_state != str(state["state"]):
 		_last_connection_state = str(state["state"])
 		_refresh_details()
@@ -389,7 +488,11 @@ func _refresh_details() -> void:
 	if process_name.length() > 26:
 		process_name = process_name.left(23) + "…"
 	_set_label_text(_details_name_label, process_name)
-	_set_label_text(_details_pid_label, "PID %d" % creature.process_pid)
+	_details_name_label.tooltip_text = creature.process_name
+	_set_label_text(
+		_details_pid_label,
+		"%s  ·  PID %d" % [creature.get_species_name(), creature.process_pid]
+	)
 	var cpu_text := "—"
 	if creature.cpu_percent != null:
 		cpu_text = "%.1f%%" % float(creature.cpu_percent)
@@ -397,26 +500,61 @@ func _refresh_details() -> void:
 	_set_label_text(_details_metrics_label, "CPU %s   ·   RAM %.1f MiB" % [cpu_text, memory_mib])
 
 	var state_text := "LIVE · latest accepted metrics"
-	var state_color := Color("#7de0bf")
+	var state_color := COLOR_CONNECTED
 	if _source_mode == SOURCE_DEMO:
 		state_text = "DEMO · SIMULATED METRICS"
-		state_color = Color("#7de0bf")
+		state_color = COLOR_CONNECTED
 	elif creature.state == ProcessCreature.State.DESPAWNING:
-		state_text = "LEAVING GARDEN · last known metrics"
-		state_color = Color("#e9be78")
+		state_text = "LEAVING · LAST KNOWN METRICS"
+		state_color = COLOR_STALE
 	elif _registry.connection_state == ProcessRegistry.STATE_STALE:
-		state_text = "STALE · last valid metrics"
-		state_color = Color("#e9be78")
+		state_text = "STALE · LAST VALID METRICS"
+		state_color = COLOR_STALE
 	elif _registry.connection_state == ProcessRegistry.STATE_DISCONNECTED:
-		state_text = "OFFLINE · last valid metrics"
-		state_color = Color("#df8f9d")
+		state_text = "OFFLINE · LAST VALID METRICS"
+		state_color = COLOR_DISCONNECTED
 	elif _registry.connection_state == ProcessRegistry.STATE_CONNECTING:
 		state_text = "WAITING FOR COLLECTOR"
-		state_color = Color("#a3bac0")
+		state_color = COLOR_WAITING
 	_set_label_text(_details_state_label, state_text)
-	_details_state_label.add_theme_color_override("font_color", state_color)
+	_set_label_color(_details_state_label, state_color)
 
 
 func _set_label_text(label: Label, value: String) -> void:
 	if label.text != value:
 		label.text = value
+
+
+func _set_label_color(label: Label, value: Color) -> void:
+	if label.get_theme_color("font_color") != value:
+		label.add_theme_color_override("font_color", value)
+
+
+func _connection_message(state: String) -> String:
+	match state:
+		ProcessRegistry.STATE_CONNECTING:
+			return "Waiting for the local collector at 127.0.0.1:8765"
+		ProcessRegistry.STATE_STALE:
+			return "Snapshot delayed · showing the last valid data"
+		ProcessRegistry.STATE_DISCONNECTED:
+			return "Collector unavailable · retrying automatically"
+	return ""
+
+
+func _refresh_empty_state(state: String) -> void:
+	if _empty_state_label == null:
+		return
+	var no_creatures := _last_represented_count == 0
+	_empty_state_label.visible = no_creatures
+	if not no_creatures:
+		return
+	if _source_mode == SOURCE_DEMO:
+		_empty_state_label.text = "NO SIMULATED ORGANISMS"
+	elif _last_monitored_count > 0:
+		_empty_state_label.text = "NO ORGANISMS REPRESENTED"
+	elif state == ProcessRegistry.STATE_CONNECTED:
+		_empty_state_label.text = "NO PROCESSES DETECTED"
+	elif state == ProcessRegistry.STATE_DISCONNECTED:
+		_empty_state_label.text = "COLLECTOR OFFLINE"
+	else:
+		_empty_state_label.text = "WAITING FOR LOCAL COLLECTOR"

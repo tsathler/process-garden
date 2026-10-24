@@ -1,5 +1,9 @@
 # Process Garden — Living System
 
+**Languages:** [English](#english) · [Português](#português)
+
+## English
+
 **A creative computing experiment that imagines running processes as creatures in a bioluminescent pixel-art ecosystem.**
 
 > **Current milestone: E01.2 — Python collector and local HTTP API implemented.** The Godot visualization is a future phase, not a finished interface.
@@ -95,6 +99,8 @@ Unit tests use fake processes and local HTTP requests. They do not depend on Win
 ---
 
 ## Português
+
+[↑ English](#english)
 
 **Experimento de computação criativa que imagina os processos do sistema como criaturas em um ecossistema de pixel art bioluminescente.**
 

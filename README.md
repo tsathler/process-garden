@@ -91,3 +91,45 @@ Unit tests use fake processes and local HTTP requests. They do not depend on Win
 ## Next steps
 
 - E01.3: connect the API to a Godot 4 client and validate incoming snapshots.
+
+---
+
+## Português
+
+**Experimento de computação criativa que imagina os processos do sistema como criaturas em um ecossistema de pixel art bioluminescente.**
+
+### Conceito e estado atual
+
+```text
+Processos do sistema → Coletor Python / psutil → Snapshot JSON
+                                                  ↓
+                                      API HTTP local (somente leitura)
+                                                  ↓
+                                       Visualização Godot (planejada)
+```
+
+**Marco E01.2:** coletor Python independente e endpoint local `GET /v1/snapshot` implementados. A coleta continua a cada dois segundos e o servidor atende apenas em loopback. A visualização em Godot 4 **ainda não está implementada**.
+
+### Tecnologias
+
+Python 3.14, uv, psutil, API JSON local, pytest e Ruff. Godot 4 está planejado.
+
+### Executar demonstração
+
+```sh
+uv sync --locked
+uv run --project . --directory collector python -m process_garden.collector --once
+uv run --project . --directory collector python -m process_garden.api
+```
+
+Consulte `http://127.0.0.1:8765/v1/snapshot` para obter o snapshot. No Windows, execute nativamente para observar os processos Windows; no WSL, a coleta observa processos Linux. Não requer privilégios administrativos.
+
+### Testes
+
+```sh
+uv run ruff check .
+uv run ruff format --check .
+uv run pytest
+```
+
+Os testes usam processos simulados e requisições HTTP locais. **Próximo passo:** conectar um cliente Godot 4 à API.

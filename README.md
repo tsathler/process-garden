@@ -1,5 +1,32 @@
 # Process Garden — Living System
 
+**A creative computing experiment that imagines running processes as creatures in a bioluminescent pixel-art ecosystem.**
+
+> **Current milestone: E01.2 — Python collector and local HTTP API implemented.** The Godot visualization is a future phase, not a finished interface.
+
+## Concept and working prototype
+
+```text
+System processes ──► Python / psutil collector ──► JSON snapshot
+                                                      │
+                                                      ▼
+                                          Local read-only HTTP API
+                                                      │
+                                                      ▼
+                                      Godot ecosystem (planned)
+```
+
+| Area | Current state |
+| --- | --- |
+| Process snapshots | Implemented |
+| Local `GET /v1/snapshot` API | Implemented, loopback-only |
+| Tests and code quality | pytest and Ruff |
+| Godot 4 visual ecosystem | Planned |
+
+The collector can be tried independently of the future visual client. No administrator privileges are required.
+
+---
+
 Process Garden turns live Windows processes into creatures in a bioluminescent pixel art ecosystem. The project is planned as a standalone Python collector and a Godot visualization connected through a local JSON interface.
 
 ## Stack

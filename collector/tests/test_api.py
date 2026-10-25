@@ -177,22 +177,30 @@ def test_get_request_bodies_are_rejected():
         stop_api(api, thread)
 
 
-def test_request_rate_allows_a_concurrent_burst_then_refills():
-    api, thread, _ = start_api()
+def test_request_rate_allows_a_concurrent_burst_then_refills(monkeypatch):
+    api = CollectorAPI(FakeCollector(), port=0)
+    clock = [api._server._rate_limit_updated_at]
+    monkeypatch.setattr(api_module.time, "monotonic", lambda: clock[0])
     try:
-        host, port = api.address
-        url = f"http://{host}:{port}/v1/snapshot"
         for _ in range(MAX_CONCURRENT_REQUESTS):
             assert api._server.allow_request()
+        assert not api._server.allow_request()
+        clock[0] += 0.11
+        assert api._server.allow_request()
+    finally:
+        api._server.server_close()
 
-        status, _, body = request(url)
+
+def test_rate_limited_request_returns_429(monkeypatch):
+    api, thread, _ = start_api()
+    try:
+        monkeypatch.setattr(api._server, "allow_request", lambda: False)
+        host, port = api.address
+
+        status, _, body = request(f"http://{host}:{port}/v1/snapshot")
 
         assert status == 429
         assert json.loads(body) == {"error": "rate_limit_exceeded"}
-
-        time.sleep(0.11)
-
-        assert request(url)[0] == 200
     finally:
         stop_api(api, thread)
 

@@ -56,14 +56,16 @@ Individual logs are in [`logs/linux-2026-10-18/`](logs/linux-2026-10-18/).
 ### Follow-up lifecycle validation — Linux, 2026-10-25
 
 After adding cooperative stop signals, owner-process monitoring, and bounded
-collector recovery, Ruff check and format check passed and pytest passed (**39
+collector recovery, Ruff check and format check passed and pytest passed (**40
 tests**). Godot 4.7.2 headless import and all five suites passed (**1,939
 tests**). The SnapshotClient test also exercised an HTTP 503 followed by a
-successful local loopback reconnect. Deterministic fakes verified the exact
-owner PID/access mask passed to the Windows-handle wrapper, stop-file cleanup,
-and collector shutdown after owner exit. These tests do not exercise Win32
-itself. Native Windows validation of normal/abrupt close and recovery remains
-pending. [`packaging/windows/validate-lifecycle.ps1`](../../packaging/windows/validate-lifecycle.ps1)
+successful local loopback reconnect. A subprocess integration test launched the
+collector CLI and verified graceful stop plus readiness/control-file cleanup.
+Deterministic fakes verified the exact owner PID/access mask passed to the
+Windows-handle wrapper and collector shutdown after owner exit. These tests do
+not exercise Win32 itself. Native Windows validation of normal/abrupt close
+and recovery remains pending.
+[`packaging/windows/validate-lifecycle.ps1`](../../packaging/windows/validate-lifecycle.ps1)
 is the repeatable Windows-native smoke for missing-helper handling, dynamic
 startup, snapshot retrieval, normal/abrupt close, and recovery. The startup
 timeout path still needs a controlled native fixture.

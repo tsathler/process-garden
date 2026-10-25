@@ -1,5 +1,7 @@
 import ctypes
 import json
+import os
+import subprocess
 import sys
 import threading
 import time
@@ -164,6 +166,60 @@ def test_owner_process_exit_stops_api_and_closes_monitor():
         assert owner.closed
     finally:
         stop_api(api, thread)
+
+
+def test_collector_cli_stop_signal_shuts_down_and_cleans_files(tmp_path: Path):
+    token = f"pg-test-{os.getpid()}-{time.monotonic_ns()}"
+    ready_file = tmp_path / f"process-garden-{token}.json"
+    stop_file = tmp_path / f"process-garden-{token}.stop"
+    environment = os.environ.copy()
+    environment["TEMP"] = str(tmp_path)
+    environment["TMP"] = str(tmp_path)
+    process = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "process_garden.api",
+            "--port",
+            "0",
+            "--interval",
+            "0.05",
+            "--ready-token",
+            token,
+            "--stop-token",
+            token,
+        ],
+        cwd=Path(__file__).parents[1],
+        env=environment,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline and not ready_file.exists() and process.poll() is None:
+            time.sleep(0.02)
+        assert process.poll() is None
+        assert ready_file.exists()
+        readiness = json.loads(ready_file.read_text(encoding="utf-8"))
+        assert readiness["host"] == "127.0.0.1"
+        assert isinstance(readiness["port"], int) and 1 <= readiness["port"] <= 65535
+
+        stop_file.write_text("stop", encoding="ascii")
+        _, stderr = process.communicate(timeout=5)
+
+        assert process.returncode == 0, stderr
+        assert not ready_file.exists()
+        assert not stop_file.exists()
+        assert not ready_file.with_name(f"{ready_file.name}.tmp").exists()
+    finally:
+        if process.poll() is None:
+            stop_file.write_text("stop", encoding="ascii")
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                process.terminate()
+                process.wait(timeout=3)
 
 
 def test_windows_owner_monitor_waits_on_the_exact_process_handle(monkeypatch):

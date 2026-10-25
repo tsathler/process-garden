@@ -1,0 +1,26 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/garden_controller.gd" id="2_garden"]
+[ext_resource type="PackedScene" path="res://scenes/environment.tscn" id="3_environment"]
+[ext_resource type="Script" path="res://scripts/snapshot_client.gd" id="4_client"]
+
+[node name="Main" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("1_main")
+
+[node name="Garden" type="Node2D" parent="."]
+script = ExtResource("2_garden")
+
+[node name="Environment" parent="Garden" instance=ExtResource("3_environment")]
+
+[node name="Creatures" type="Node2D" parent="Garden"]
+
+[node name="SnapshotClient" type="Node" parent="."]
+script = ExtResource("4_client")

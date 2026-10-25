@@ -5,10 +5,14 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
+import re
+import tempfile
 import threading
 import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 from socketserver import ThreadingMixIn
 
 from .collector import ProcessCollector, Snapshot
@@ -197,10 +201,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Serve Process Garden snapshots over local HTTP")
     parser.add_argument("--port", type=int, default=8765, help="loopback port (default: 8765)")
     parser.add_argument("--interval", type=float, default=2.0, help="sample interval in seconds")
+    parser.add_argument(
+        "--ready-token",
+        help="optional space-free token for the local app's loopback startup handshake",
+    )
     args = parser.parse_args()
 
     try:
         api = CollectorAPI(ProcessCollector(interval_seconds=args.interval), port=args.port)
+        if args.ready_token is not None:
+            _write_ready_file(_ready_file_path(args.ready_token), api.address)
     except (OSError, ValueError) as exc:
         parser.error(f"could not start the local API: {exc}")
     print(f"Process Garden API listening on http://{HOST}:{api.address[1]}{SNAPSHOT_PATH}")
@@ -209,6 +219,24 @@ def main() -> None:
     except KeyboardInterrupt:
         pass
     print("Process Garden API stopped")
+
+
+def _write_ready_file(path: Path, address: tuple[str, int]) -> None:
+    """Atomically publish only the loopback endpoint selected by this process."""
+    host, port = address
+    if host != HOST or not 1 <= port <= 65535:
+        raise ValueError("collector readiness endpoint must use a bound loopback port")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f"{path.name}.tmp")
+    temporary.write_text(json.dumps({"host": host, "port": port}), encoding="utf-8")
+    temporary.replace(path)
+
+
+def _ready_file_path(token: str) -> Path:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", token):
+        raise ValueError("ready token may contain only letters, digits, hyphens, and underscores")
+    temporary_directory = os.environ.get("TEMP") or tempfile.gettempdir()
+    return Path(temporary_directory) / f"process-garden-{token}.json"
 
 
 if __name__ == "__main__":

@@ -1,88 +1,100 @@
-# Process Garden — Living System
+# Process Garden — Synthetic Life Sanctuary
 
 **Languages:** [English](#english) · [Português](#português)
 
 ## English
 
-**A creative computing experiment that imagines running processes as creatures in a bioluminescent pixel-art ecosystem.**
+Process Garden turns local process activity into creatures in a bioluminescent
+pixel-art garden. A standalone Python collector samples process metrics, and a
+Godot client renders them through a read-only loopback HTTP API. The current
+branch contains the Synthetic Life MVP and a Windows release candidate.
 
-> **Current milestone: E01.2 — Python collector and local HTTP API implemented.** The Godot visualization is a future phase, not a finished interface.
+## Current status
 
-## Concept and working prototype
+The garden supports REAL process data and deterministic DEMO data, with
+Synthetic Life as its default visual style. Six procedural families are
+available: Wisp, Beetle, Spore, Crystal, Moth, and Larva. LEGACY and COZY remain
+selectable renderer fallbacks. The client tracks the complete collected
+process set and displays at most 30 creatures; the visual limit does not
+restrict collection or registry tracking.
 
-```text
-System processes ──► Python / psutil collector ──► JSON snapshot
-                                                      │
-                                                      ▼
-                                          Local read-only HTTP API
-                                                      │
-                                                      ▼
-                                      Godot ecosystem (planned)
-```
+The collector exposes only PID, creation time, process name, CPU percentage,
+and RSS memory. It binds to `127.0.0.1` and serves read-only snapshots at
+`/v1/snapshot`. CPU is sampled without blocking; the first value for each
+process identity is `null`, and later values follow psutil semantics, where
+100% represents one fully used logical CPU.
 
-| Area | Current state |
-| --- | --- |
-| Process snapshots | Implemented |
-| Local `GET /v1/snapshot` API | Implemented, loopback-only |
-| Tests and code quality | pytest and Ruff |
-| Godot 4 visual ecosystem | Planned |
+The MVP validation record, benchmark details, package evidence, and remaining
+review gates are in [docs/synthetic-life/FINAL-MVP.md](docs/synthetic-life/FINAL-MVP.md).
+The Windows build has passed native startup, snapshot, and shutdown smoke
+checks. Automated Linux/WSL and Windows checks passed. Human visual review on
+Windows and artistic approval remain pending. Benchmarks show comparable mean
+FPS across renderers, with occasional long frames at high process counts and
+higher Synthetic P95 frame times; see the validation record for measurements
+and limits.
 
-The collector can be tried independently of the future visual client. No administrator privileges are required.
+## Requirements
 
----
+- Python 3.14 and uv for collector development
+- Godot 4.7.2 for the garden and Windows export
+- Windows PowerShell and Godot Windows export templates to build the package
 
-Process Garden turns live Windows processes into creatures in a bioluminescent pixel art ecosystem. The project is planned as a standalone Python collector and a Godot visualization connected through a local JSON interface.
+## Install and run the collector
 
-## Stack
-
-- Python 3.14, uv, and psutil for process collection
-- pytest and Ruff for validation
-- Godot 4 is planned for the visualization
-
-## Current state: E01.2
-
-The independent collector produces JSON-ready process snapshots. The read-only API serves the latest snapshot at `GET http://127.0.0.1:8765/v1/snapshot`; collection continues every two seconds even when there are no requests. The server binds only to loopback.
-
-CPU is sampled without blocking. Its first value for each process identity is `null`; later values use psutil semantics, where 100% represents one fully used logical CPU and a multi-threaded process can exceed 100%.
-
-## Install
-
-Use Python 3.14 and uv:
+From the repository root:
 
 ```sh
 uv sync --locked
 ```
 
-Keep WSL and Windows environments separate. In PowerShell, set the project environment before syncing so it is outside the repository:
-
-```powershell
-$env:UV_PROJECT_ENVIRONMENT = "$env:LOCALAPPDATA\ProcessGarden\venv"
-uv sync --locked
-```
-
-## Run a real collection demo
-
-From the repository root, run one real snapshot as JSON:
+Print one process snapshot as JSON:
 
 ```sh
 uv run --project . --directory collector python -m process_garden.collector --once
 ```
 
-Start the local HTTP API:
+Run the local API:
 
 ```sh
 uv run --project . --directory collector python -m process_garden.api
 ```
 
-Fetch the current snapshot with a browser, `curl http://127.0.0.1:8765/v1/snapshot`, or another local client. The API supports `--port` and `--interval`; for example:
+The API refreshes snapshots every two seconds, independently of requests. Its
+port and sampling interval can be changed, for example:
 
 ```sh
 uv run --project . --directory collector python -m process_garden.api --port 8766 --interval 1.5
 ```
 
-Stop it with Ctrl+C. It requires no administrator privileges. Run from Windows to collect Windows processes; a WSL run observes Linux processes.
+Fetch the current snapshot at `http://127.0.0.1:8765/v1/snapshot`. Run the
+collector on Windows to observe Windows processes; a WSL/Linux run observes
+processes in that environment. No administrator privileges are required.
+
+## Run the garden
+
+Open `garden/project.godot` in Godot 4.7.2 or run:
+
+```sh
+godot --path garden
+```
+
+In the editor, REAL mode connects to the local API. DEMO mode runs without the
+collector and offers reproducible synthetic populations of 50, 150, 300, or
+500 processes. REAL and DEMO are labeled distinctly. In an exported Windows
+application, the app starts its bundled collector on a dynamic loopback port
+and stops the collector it started when the app closes. Extract the release
+ZIP and run `ProcessGarden.exe`; see
+[packaging/windows/README.txt](packaging/windows/README.txt).
+
+The client accepts only loopback HTTP snapshot endpoints, polls one request at
+a time, and keeps the last valid state through collection failures. Complete
+snapshots remove identities that have exited; partial snapshots retain missing
+identities until a complete snapshot arrives. Connection state recovers
+automatically when valid samples resume.
 
 ## Validate
+
+Python checks:
 
 ```sh
 uv run ruff check .
@@ -90,37 +102,52 @@ uv run ruff format --check .
 uv run pytest
 ```
 
-Unit tests use fake processes and local HTTP requests. They do not depend on Windows or the local process list.
+Godot import and test suites (Godot 4.7.2):
 
-## Next steps
+```sh
+godot --headless --editor --path garden --quit
+godot --headless --path garden --script res://tests/run_tests.gd
+godot --headless --path garden --script res://tests/run_sprite_prototype_tests.gd
+godot --headless --path garden --script res://tests/run_sprite_resolution_tests.gd
+godot --headless --path garden --script res://tests/run_animation_poc_tests.gd
+godot --headless --path garden --script res://tests/run_synthetic_wisp_tests.gd
+```
 
-- E01.3: connect the API to a Godot 4 client and validate incoming snapshots.
+To build the Windows folder and ZIP from native PowerShell with uv, Godot
+4.7.2, and export templates installed:
 
----
+```powershell
+./packaging/windows/build.ps1 -OutputPath C:\Build\ProcessGarden-MVP
+```
+
+The script runs the Python checks and all five Godot suites before packaging.
+It refuses to overwrite an existing output directory.
 
 ## Português
 
 [↑ English](#english)
 
-**Experimento de computação criativa que imagina os processos do sistema como criaturas em um ecossistema de pixel art bioluminescente.**
+O Process Garden transforma a atividade dos processos locais em criaturas num
+jardim de pixel art bioluminescente. Um coletor Python independente lê métricas
+e um cliente Godot as exibe por uma API HTTP somente leitura, limitada ao
+loopback. O MVP atual inclui o modo Synthetic Life e um candidato de lançamento
+para Windows.
 
-### Conceito e estado atual
+### Estado atual
 
-```text
-Processos do sistema → Coletor Python / psutil → Snapshot JSON
-                                                  ↓
-                                      API HTTP local (somente leitura)
-                                                  ↓
-                                       Visualização Godot (planejada)
-```
+O jardim oferece dados reais (REAL) e dados simulados determinísticos (DEMO).
+Synthetic Life é o estilo visual padrão, com seis famílias procedurais: Wisp,
+Beetle, Spore, Crystal, Moth e Larva. LEGACY e COZY continuam disponíveis como
+alternativas. O sistema acompanha todos os processos coletados e mostra até 30
+criaturas; esse limite visual não reduz a coleta nem o registro.
 
-**Marco E01.2:** coletor Python independente e endpoint local `GET /v1/snapshot` implementados. A coleta continua a cada dois segundos e o servidor atende apenas em loopback. A visualização em Godot 4 **ainda não está implementada**.
+O coletor lê somente PID, horário de criação, nome, percentual de CPU e memória
+RSS. A API atende em `127.0.0.1/v1/snapshot`, sem comandos de controle. A
+primeira amostra de CPU por identidade é `null`.
 
-### Tecnologias
+### Instalar e executar
 
-Python 3.14, uv, psutil, API JSON local, pytest e Ruff. Godot 4 está planejado.
-
-### Executar demonstração
+Use Python 3.14 e uv para instalar e executar o coletor:
 
 ```sh
 uv sync --locked
@@ -128,14 +155,13 @@ uv run --project . --directory collector python -m process_garden.collector --on
 uv run --project . --directory collector python -m process_garden.api
 ```
 
-Consulte `http://127.0.0.1:8765/v1/snapshot` para obter o snapshot. No Windows, execute nativamente para observar os processos Windows; no WSL, a coleta observa processos Linux. Não requer privilégios administrativos.
+No Windows, execute o coletor nativamente para observar processos Windows; no
+WSL/Linux, ele observa processos desse ambiente. Para abrir o jardim, use
+Godot 4.7.2 e execute `godot --path garden`. No aplicativo exportado para
+Windows, o coletor incluído inicia junto com o app.
 
-### Testes
-
-```sh
-uv run ruff check .
-uv run ruff format --check .
-uv run pytest
-```
-
-Os testes usam processos simulados e requisições HTTP locais. **Próximo passo:** conectar um cliente Godot 4 à API.
+Os testes Python, as cinco suítes Godot, as validações do pacote Windows e as
+limitações conhecidas estão documentados em
+[docs/synthetic-life/FINAL-MVP.md](docs/synthetic-life/FINAL-MVP.md). Os testes
+automatizados passaram em Linux/WSL e Windows; a revisão visual humana no
+Windows e a aprovação artística ainda estão pendentes.

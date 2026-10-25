@@ -4,9 +4,11 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from pathlib import Path
 
 import process_garden.api as api_module
-from process_garden.api import MAX_RESPONSE_BYTES, CollectorAPI
+import pytest
+from process_garden.api import MAX_RESPONSE_BYTES, CollectorAPI, _ready_file_path, _write_ready_file
 from process_garden.collector import ProcessRecord, Snapshot
 
 
@@ -76,6 +78,31 @@ def stop_api(api, thread):
         api.shutdown()
         thread.join(timeout=2)
     assert not thread.is_alive()
+
+
+def test_ready_file_publishes_only_the_bound_loopback_endpoint(tmp_path: Path):
+    ready_file = tmp_path / "runtime" / "collector.json"
+
+    _write_ready_file(ready_file, ("127.0.0.1", 49152))
+
+    assert json.loads(ready_file.read_text(encoding="utf-8")) == {
+        "host": "127.0.0.1",
+        "port": 49152,
+    }
+    assert not ready_file.with_name("collector.json.tmp").exists()
+
+
+def test_ready_file_rejects_non_loopback_or_unbound_endpoints(tmp_path: Path):
+    with pytest.raises(ValueError, match="loopback"):
+        _write_ready_file(tmp_path / "collector.json", ("0.0.0.0", 49152))
+    with pytest.raises(ValueError, match="loopback"):
+        _write_ready_file(tmp_path / "collector.json", ("127.0.0.1", 0))
+
+
+def test_ready_token_resolves_to_a_safe_temporary_filename():
+    assert _ready_file_path("pg-123-456").name == "process-garden-pg-123-456.json"
+    with pytest.raises(ValueError, match="ready token"):
+        _ready_file_path("../../outside")
 
 
 def test_get_snapshot_returns_latest_json_on_loopback():

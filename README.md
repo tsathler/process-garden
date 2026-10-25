@@ -1,5 +1,9 @@
 # Process Garden — Synthetic Life Sanctuary
 
+**Languages:** [English](#english) · [Português](#português)
+
+## English
+
 Process Garden turns local process activity into creatures in a bioluminescent
 pixel-art garden. A standalone Python collector samples process metrics, and a
 Godot client renders them through a read-only loopback HTTP API. The current
@@ -118,3 +122,46 @@ To build the Windows folder and ZIP from native PowerShell with uv, Godot
 
 The script runs the Python checks and all five Godot suites before packaging.
 It refuses to overwrite an existing output directory.
+
+## Português
+
+[↑ English](#english)
+
+O Process Garden transforma a atividade dos processos locais em criaturas num
+jardim de pixel art bioluminescente. Um coletor Python independente lê métricas
+e um cliente Godot as exibe por uma API HTTP somente leitura, limitada ao
+loopback. O MVP atual inclui o modo Synthetic Life e um candidato de lançamento
+para Windows.
+
+### Estado atual
+
+O jardim oferece dados reais (REAL) e dados simulados determinísticos (DEMO).
+Synthetic Life é o estilo visual padrão, com seis famílias procedurais: Wisp,
+Beetle, Spore, Crystal, Moth e Larva. LEGACY e COZY continuam disponíveis como
+alternativas. O sistema acompanha todos os processos coletados e mostra até 30
+criaturas; esse limite visual não reduz a coleta nem o registro.
+
+O coletor lê somente PID, horário de criação, nome, percentual de CPU e memória
+RSS. A API atende em `127.0.0.1/v1/snapshot`, sem comandos de controle. A
+primeira amostra de CPU por identidade é `null`.
+
+### Instalar e executar
+
+Use Python 3.14 e uv para instalar e executar o coletor:
+
+```sh
+uv sync --locked
+uv run --project . --directory collector python -m process_garden.collector --once
+uv run --project . --directory collector python -m process_garden.api
+```
+
+No Windows, execute o coletor nativamente para observar processos Windows; no
+WSL/Linux, ele observa processos desse ambiente. Para abrir o jardim, use
+Godot 4.7.2 e execute `godot --path garden`. No aplicativo exportado para
+Windows, o coletor incluído inicia junto com o app.
+
+Os testes Python, as cinco suítes Godot, as validações do pacote Windows e as
+limitações conhecidas estão documentados em
+[docs/synthetic-life/FINAL-MVP.md](docs/synthetic-life/FINAL-MVP.md). Os testes
+automatizados passaram em Linux/WSL e Windows; a revisão visual humana no
+Windows e a aprovação artística ainda estão pendentes.

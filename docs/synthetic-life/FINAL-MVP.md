@@ -63,7 +63,10 @@ successful local loopback reconnect. Deterministic fakes verified the exact
 owner PID/access mask passed to the Windows-handle wrapper, stop-file cleanup,
 and collector shutdown after owner exit. These tests do not exercise Win32
 itself. Native Windows validation of normal/abrupt close and recovery remains
-pending.
+pending. [`packaging/windows/validate-lifecycle.ps1`](../../packaging/windows/validate-lifecycle.ps1)
+is the repeatable Windows-native smoke for missing-helper handling, dynamic
+startup, snapshot retrieval, normal/abrupt close, and recovery. The startup
+timeout path still needs a controlled native fixture.
 
 ### Windows native
 

@@ -67,8 +67,8 @@ not exercise Win32 itself. Native Windows validation of normal/abrupt close
 and recovery remains pending.
 [`packaging/windows/validate-lifecycle.ps1`](../../packaging/windows/validate-lifecycle.ps1)
 is the repeatable Windows-native smoke for missing-helper handling, dynamic
-startup, snapshot retrieval, normal/abrupt close, and recovery. The startup
-timeout path still needs a controlled native fixture.
+startup, readiness timeout cleanup, snapshot retrieval, normal/abrupt close,
+and recovery. The script has not yet been run on the packaged Windows app.
 
 ### Windows native
 

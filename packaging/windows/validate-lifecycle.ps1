@@ -154,6 +154,36 @@ function Assert-NoLifecycleFiles {
     }
 }
 
+function New-TimeoutCollectorFixture {
+    param([string]$TestPackagePath)
+
+    $CollectorDirectory = Join-Path $TestPackagePath 'collector'
+    $CollectorExecutable = Join-Path $CollectorDirectory 'ProcessGardenCollector.exe'
+    Move-Item -LiteralPath $CollectorExecutable -Destination "$CollectorExecutable.real"
+    $FixtureSource = @'
+using System;
+using System.IO;
+using System.Threading;
+
+public static class ProcessGardenStartupTimeoutFixture {
+    [STAThread]
+    public static void Main(string[] args) {
+        string token = null;
+        for (int index = 0; index + 1 < args.Length; index++) {
+            if (args[index] == "--stop-token") token = args[index + 1];
+        }
+        if (String.IsNullOrEmpty(token)) return;
+        string temp = Environment.GetEnvironmentVariable("TEMP");
+        string stopFile = Path.Combine(temp, "process-garden-" + token + ".stop");
+        while (!File.Exists(stopFile)) Thread.Sleep(25);
+        try { File.Delete(stopFile); } catch (IOException) { }
+        try { File.Delete(stopFile + ".tmp"); } catch (IOException) { }
+    }
+}
+'@
+    Add-Type -TypeDefinition $FixtureSource -Language CSharp -OutputType WindowsApplication -OutputAssembly $CollectorExecutable
+}
+
 try {
     $MissingPackage = Join-Path $RunRoot 'missing-collector-package'
     New-Item -ItemType Directory -Path $MissingPackage | Out-Null
@@ -170,6 +200,21 @@ try {
     Close-TestAppNormally -App $MissingApp
     Assert-NoLifecycleFiles -TempPath (Join-Path $RunRoot 'missing-collector')
     Write-Host 'PASS: missing helper leaves the app running without a collector or stale handshake files.'
+
+    $TimeoutPackage = Join-Path $RunRoot 'timeout-collector-package'
+    New-Item -ItemType Directory -Path $TimeoutPackage | Out-Null
+    Copy-Item -Path (Join-Path $PackagePath '*') -Destination $TimeoutPackage -Recurse -Force
+    New-TimeoutCollectorFixture -TestPackagePath $TimeoutPackage
+    $TimeoutApp = Start-TestApp -Name 'collector-timeout' -TestPackagePath $TimeoutPackage
+    $TimeoutCollector = Wait-OwnedCollector -App $TimeoutApp
+    if (-not $TimeoutCollector.WaitForExit(15000)) {
+        throw 'The helper did not stop after the readiness handshake timed out.'
+    }
+    $TimeoutApp.Refresh()
+    if ($TimeoutApp.HasExited) { throw 'The app exited when the collector handshake timed out.' }
+    Assert-NoLifecycleFiles -TempPath (Join-Path $RunRoot 'collector-timeout')
+    Close-TestAppNormally -App $TimeoutApp
+    Write-Host 'PASS: handshake timeout signals and cleans the started helper while the app remains available.'
 
     $NormalApp = Start-TestApp -Name 'normal-close'
     $NormalCollector = Wait-OwnedCollector -App $NormalApp

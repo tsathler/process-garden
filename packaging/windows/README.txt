@@ -17,12 +17,12 @@ For a development build and complete test commands, see docs/synthetic-life/
 FINAL-MVP.md in the source repository.
 
 After a native Windows build, validate the bundled collector lifecycle from an
-interactive PowerShell session:
+interactive Windows PowerShell 5.1 session (`powershell.exe`):
 
   .\packaging\windows\validate-lifecycle.ps1 -PackagePath .\build\windows-candidate
 
-The script isolates TEMP and app-data paths, tests a missing helper, dynamic
-loopback startup, normal close, abrupt app exit, and recovery after terminating
-the test app's own collector. It only inspects snapshots in memory and prints
-pass/fail summaries. Run it against a disposable development candidate, not a
-release package.
+The script isolates TEMP and app-data paths, tests a missing helper, a helper
+that never completes the readiness handshake, dynamic loopback startup, normal
+close, abrupt app exit, and recovery after terminating the test app's own
+collector. It only inspects snapshots in memory and prints pass/fail summaries.
+Run it against a disposable development candidate, not a release package.

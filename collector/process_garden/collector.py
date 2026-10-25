@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import threading
 import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
@@ -19,6 +21,9 @@ from typing import Any
 import psutil
 
 SCHEMA_VERSION = 1
+MAX_SAFE_JSON_INTEGER = 9_007_199_254_740_991
+MIN_INTERVAL_SECONDS = 0.001
+MAX_INTERVAL_SECONDS = min(threading.TIMEOUT_MAX, MAX_SAFE_JSON_INTEGER / 1000.0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,12 +66,39 @@ class ProcessCollector:
     """
 
     def __init__(self, interval_seconds: float = 2.0, psutil_module: Any = psutil):
-        if interval_seconds <= 0:
-            raise ValueError("interval_seconds must be greater than zero")
         self.interval_seconds = interval_seconds
         self._psutil = psutil_module
         self._sequence = 0
         self._cpu_processes: dict[tuple[int, float], Any] = {}
+
+    @property
+    def interval_seconds(self) -> float:
+        """Return the validated sampling interval in seconds."""
+        return self._interval_seconds
+
+    @interval_seconds.setter
+    def interval_seconds(self, value: float) -> None:
+        if isinstance(value, bool):
+            raise ValueError("interval_seconds must be a finite number")
+        try:
+            seconds = float(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError("interval_seconds must be a finite number") from exc
+        if not math.isfinite(seconds):
+            raise ValueError("interval_seconds must be a finite number")
+        if not MIN_INTERVAL_SECONDS <= seconds <= MAX_INTERVAL_SECONDS:
+            raise ValueError(
+                "interval_seconds must be between "
+                f"{MIN_INTERVAL_SECONDS} and {MAX_INTERVAL_SECONDS} seconds"
+            )
+
+        interval_ms = round(seconds * 1000)
+        if interval_ms < 1:
+            raise ValueError("interval_seconds must round to at least 1 millisecond")
+        if interval_ms > MAX_SAFE_JSON_INTEGER:
+            raise ValueError("interval_ms exceeds the safe JSON integer range")
+        self._interval_seconds = seconds
+        self.interval_ms = interval_ms
 
     def collect(self) -> Snapshot:
         """Read one snapshot, skipping processes that cannot be read safely."""
@@ -117,7 +149,7 @@ class ProcessCollector:
             schema_version=SCHEMA_VERSION,
             sequence=self._sequence,
             collected_at=now,
-            interval_ms=round(self.interval_seconds * 1000),
+            interval_ms=self.interval_ms,
             status="partial" if skipped else "ok",
             processes=records,
             skipped_count=skipped,
@@ -137,7 +169,10 @@ def main() -> None:
     parser.add_argument("--interval", type=float, default=2.0, help="sample interval in seconds")
     parser.add_argument("--once", action="store_true", help="print one snapshot and exit")
     args = parser.parse_args()
-    collector = ProcessCollector(args.interval)
+    try:
+        collector = ProcessCollector(args.interval)
+    except ValueError as exc:
+        parser.error(str(exc))
     snapshots = [collector.collect()] if args.once else collector.run()
     try:
         for snapshot in snapshots:

@@ -16,7 +16,7 @@ Each process record contains `pid` (non-negative integer), `create_time` (Unix t
 
 ## Metric semantics
 
-The default configured interval is 2,000 ms. The collector samples when `collect()` is called; `run()` schedules repeated samples at the configured cadence. CPU uses psutil's non-blocking per-process measurement. `100` means one logical CPU fully used, so multi-threaded processes can exceed 100. The first successfully collected sample for an identity reports `null`, since no prior interval exists; a measured zero is reported as `0.0`.
+The default configured interval is 2,000 ms. Configured intervals must be finite, at least 1 ms, and no greater than the platform's supported thread-wait limit; intervals outside this range are rejected. The collector samples when `collect()` is called; `run()` schedules repeated samples at the configured cadence. CPU uses psutil's non-blocking per-process measurement. `100` means one logical CPU fully used, so multi-threaded processes can exceed 100. The first successfully collected sample for an identity reports `null`, since no prior interval exists; a measured zero is reported as `0.0`.
 
 RSS is the resident set size from psutil's `memory_info().rss`, in bytes. CPU reflects the period since the previous CPU sample for that process, so the first report is not a lifetime average.
 
@@ -30,9 +30,11 @@ Access denied, process exit, and zombie errors are handled per process and incre
 
 `GET /v1/snapshot` returns the latest snapshot as `application/json`. The server binds only to `127.0.0.1` on port `8765` by default. It collects once before serving, then refreshes on a background thread independently of requests. `interval_ms` reports the configured sampling interval; `collected_at` reports when that snapshot was collected.
 
-The API accepts no request body and no methods that modify data. It limits each snapshot response to 1 MiB, accepts at most eight concurrent requests, and rate-limits snapshot reads to ten per second. Errors use a small JSON object with an `error` code. An unexpectedly failed collection leaves the last valid snapshot available; consumers can inspect `collected_at` to determine its age.
+The API accepts no request body and no methods that modify data. It limits each snapshot response to 1 MiB, accepts at most eight concurrent requests, and rate-limits snapshot reads to ten per second with a burst capacity of eight requests. Errors use a small JSON object with an `error` code. An unexpectedly failed collection leaves the last valid snapshot available; consumers can inspect `collected_at` to determine its age.
 
 The selected `status` values are `ok` and `partial`; a collector-wide failure does not create a new snapshot or change the last valid one. CPU values retain psutil's above-100 semantics. Consumers should use `sequence` to detect skipped snapshots.
+
+The exported Windows app starts its own collector with an operating-system-selected loopback port. It requests normal shutdown through a token-specific temporary signal file. The collector also holds a synchronization handle to the exact app process and exits when that process terminates, including abrupt app exit. The app may restart the collector after three consecutive request failures only when its launched collector PID is no longer running; it never sends a process-termination signal. These lifecycle controls do not apply to processes represented in snapshots.
 
 ## E01.3 Godot client
 
@@ -40,10 +42,10 @@ The Godot client polls the loopback endpoint every two seconds using `HTTPReques
 
 Process identity is `(pid, create_time)`. A newly accepted complete (`ok`) snapshot adds new identities, updates present ones, and removes absent ones. For `partial` snapshots, absent identities remain tracked because the collector could not read the entire process set. Duplicate or older snapshots do not reconcile or renew freshness. The registry compares the UTC collection timestamp as an instant and uses local monotonic elapsed time after receipt. It allows up to five seconds of future clock skew, rejects timestamps older than the last accepted timestamp, and considers a sample older than fifteen seconds too old to accept. If sequence decreases while the collection timestamp advances, the collector is treated as restarted; the timestamp allows restart detection without changing the existing API contract.
 
-Connection state is Connecting before the first accepted sample, Connected while the last new sample is under six seconds old, Stale from six seconds, and Disconnected from fifteen seconds. A failed request records the problem but does not erase the last snapshot or process identities. Repeated cached snapshots do not reset these timers. E01.3's parser and registry checks can run with `godot --headless --path garden --script res://tests/run_tests.gd`; actual Windows process integration requires the Godot client and Python API to run together on Windows.
+Connection state is Connecting before the first accepted sample, Connected while the last new sample is under six seconds old, Stale from six seconds, and Disconnected from fifteen seconds. A failed request records the problem but does not erase the last snapshot or process identities. Repeated cached snapshots do not reset these timers. Godot 4.7.2 headless import and all five suites, including parser/registry behavior and SnapshotClient reconnects, have passed in Linux/WSL. This does not validate Windows process integration or the bundled collector's Win32 lifecycle; those require a native Windows run.
 
 ### Decisions for E01.2 follow-up
 
 - No session identifier was added to the snapshot. A strictly newer UTC collection time paired with a non-increasing sequence is sufficient for the current local client to identify a collector restart. If future clients need unambiguous sessions across clock changes, add a session identifier in a versioned contract change.
 - Partial snapshots preserve absent identities until a later complete snapshot includes or omits them. This avoids false process-exit events; consider bounded expiry if real partial collection proves frequent.
-- Godot integration has not been validated in this WSL environment because no Godot executable is installed. Windows collection and Godot UI integration remain manual validation items.
+- Snapshot parsing and registry behavior are covered by the current headless suites. Native Windows collection and the exported app's collector startup/shutdown remain manual validation items.

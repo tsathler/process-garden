@@ -6,6 +6,7 @@ const READY_POLL_SECONDS := 0.1
 
 var _owned_pid := -1
 var _ready_file := ""
+var _stop_file := ""
 
 
 func should_manage_bundled_collector() -> bool:
@@ -18,16 +19,36 @@ func launch_and_configure(client: SnapshotClient) -> Dictionary:
 	var executable := OS.get_executable_path().get_base_dir().path_join("collector").path_join("ProcessGardenCollector.exe")
 	if not FileAccess.file_exists(executable):
 		return {"ok": false, "error": "bundled_collector_missing · DEMO remains available"}
-	var token := "pg-%d-%d" % [OS.get_process_id(), Time.get_ticks_usec()]
 	var temp_directory := OS.get_environment("TEMP")
 	if temp_directory.is_empty():
 		return {"ok": false, "error": "temporary_directory_unavailable · DEMO remains available"}
+	if _owned_pid > 0:
+		if OS.is_process_running(_owned_pid):
+			stop_owned_collector()
+			return {"ok": false, "error": "previous_collector_stopping · DEMO remains available"}
+		_forget_exited_collector()
+	var token := Crypto.new().generate_random_bytes(16).hex_encode()
 	_ready_file = temp_directory.path_join("process-garden-%s.json" % token)
-	var arguments := PackedStringArray(["--port", "0", "--interval", "2", "--ready-token", token])
+	_stop_file = temp_directory.path_join("process-garden-%s.stop" % token)
+	var arguments := PackedStringArray(
+		[
+			"--port",
+			"0",
+			"--interval",
+			"2",
+			"--ready-token",
+			token,
+			"--stop-token",
+			token,
+			"--owner-pid",
+			str(OS.get_process_id()),
+		]
+	)
 	_owned_pid = OS.create_process(executable, arguments, false)
 	if _owned_pid <= 0:
 		_owned_pid = -1
 		_remove_ready_file()
+		_remove_stop_file()
 		return {"ok": false, "error": "bundled_collector_start_failed · DEMO remains available"}
 
 	var deadline := Time.get_ticks_msec() + int(STARTUP_TIMEOUT_SECONDS * 1000.0)
@@ -49,14 +70,31 @@ func launch_and_configure(client: SnapshotClient) -> Dictionary:
 
 
 func stop_owned_collector() -> void:
-	if _owned_pid > 0:
-		OS.kill(_owned_pid)
-		_owned_pid = -1
+	if _owned_pid > 0 and not _stop_file.is_empty():
+		var stop_signal := FileAccess.open(_stop_file, FileAccess.WRITE)
+		if stop_signal != null:
+			stop_signal.store_string("stop")
+			stop_signal.close()
 	_remove_ready_file()
+
+
+func owned_collector_has_exited() -> bool:
+	if _owned_pid <= 0:
+		return true
+	if OS.is_process_running(_owned_pid):
+		return false
+	_forget_exited_collector()
+	return true
 
 
 func get_owned_pid() -> int:
 	return _owned_pid
+
+
+func _forget_exited_collector() -> void:
+	_owned_pid = -1
+	_remove_ready_file()
+	_remove_stop_file()
 
 
 func _exit_tree() -> void:
@@ -93,3 +131,9 @@ func _remove_ready_file() -> void:
 	if not _ready_file.is_empty() and FileAccess.file_exists(_ready_file):
 		DirAccess.remove_absolute(_ready_file)
 	_ready_file = ""
+
+
+func _remove_stop_file() -> void:
+	if not _stop_file.is_empty() and FileAccess.file_exists(_stop_file):
+		DirAccess.remove_absolute(_stop_file)
+	_stop_file = ""

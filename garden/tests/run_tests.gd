@@ -28,6 +28,7 @@ func _initialize() -> void:
 func _run() -> void:
 	_test_valid_snapshot_and_null_cpu()
 	_test_invalid_json_and_contract()
+	await _test_snapshot_client_recovers_after_http_failure()
 	_test_timestamp_calendar_validation()
 	_test_duplicate_identity_and_negative_metric()
 	_test_pid_zero_regression()
@@ -62,6 +63,63 @@ func _test_valid_snapshot_and_null_cpu() -> void:
 	_check(Parser.parse_text("{")["category"] == "json", "invalid JSON rejected")
 
 
+func _test_snapshot_client_recovers_after_http_failure() -> void:
+	var server := TCPServer.new()
+	var listen_result := server.listen(0, "127.0.0.1")
+	_check(listen_result == OK, "local SnapshotClient fixture binds only loopback")
+	if listen_result != OK:
+		return
+	var client := SnapshotClient.new()
+	client.endpoint_url = "http://127.0.0.1:%d/v1/snapshot" % server.get_local_port()
+	client.poll_interval_seconds = 0.25
+	client.request_timeout_seconds = 1.0
+	client.set_polling_enabled(false)
+	var failures: Array[String] = []
+	var received: Array[Dictionary] = []
+	client.request_failed.connect(func(category: String, _detail: String): failures.append(category))
+	client.snapshot_received.connect(func(snapshot: Dictionary): received.append(snapshot))
+	root.add_child(client)
+	await process_frame
+	client.set_polling_enabled(true)
+	var peers: Array[StreamPeerTCP] = []
+	var request_count := 0
+	var response := JSON.stringify(
+		_snapshot(
+			1,
+			Time.get_unix_time_from_system(),
+			"ok",
+			[_proc(402, 20.5, null, 8192)]
+		)
+	).to_utf8_buffer()
+	for _frame in range(240):
+		if server.is_connection_available():
+			var peer := server.take_connection()
+			request_count += 1
+			var reply := PackedByteArray()
+			if request_count == 1:
+				reply = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_utf8_buffer()
+			else:
+				reply = (
+					"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\nConnection: close\r\n\r\n"
+					% response.size()
+				).to_utf8_buffer()
+				reply.append_array(response)
+			peer.put_data(reply)
+			peers.append(peer)
+		await process_frame
+		if not received.is_empty():
+			break
+	_check(failures == ["http_status"], "SnapshotClient reports a failed request and keeps polling")
+	_check(request_count >= 2, "SnapshotClient reconnects after the first HTTP failure")
+	_check(received.size() == 1, "SnapshotClient accepts a valid snapshot after reconnecting")
+	if not received.is_empty():
+		_check(received[0]["processes"][0]["cpu_percent"] == null, "reconnected snapshot preserves null CPU")
+	client.set_polling_enabled(false)
+	client.queue_free()
+	server.stop()
+	await process_frame
+
+
 func _test_invalid_json_and_contract() -> void:
 	var wrong_version := _snapshot(1, 1000.0, "ok", [])
 	wrong_version["schema_version"] = 2
@@ -78,6 +136,12 @@ func _test_invalid_json_and_contract() -> void:
 	var fractional_integer := _snapshot(1, 1000.0, "ok", [])
 	fractional_integer["sequence"] = 1.5
 	_check(not Parser.validate_data(fractional_integer)["ok"], "fractional integer rejected")
+	var inconsistent_ok := _snapshot(1, 1000.0, "ok", [])
+	inconsistent_ok["skipped_count"] = 1
+	_check(not Parser.validate_data(inconsistent_ok)["ok"], "ok snapshot rejects skipped records")
+	var inconsistent_partial := _snapshot(1, 1000.0, "partial", [])
+	inconsistent_partial["skipped_count"] = 0
+	_check(not Parser.validate_data(inconsistent_partial)["ok"], "partial snapshot requires skipped records")
 
 
 func _test_timestamp_calendar_validation() -> void:
@@ -1790,7 +1854,7 @@ func _snapshot(sequence: int, collected_unix: float, status: String, processes: 
 		"interval_ms": 2000,
 		"status": status,
 		"processes": processes,
-		"skipped_count": 0,
+		"skipped_count": 1 if status == "partial" else 0,
 		"_collected_at_unix": collected_unix,
 	}
 

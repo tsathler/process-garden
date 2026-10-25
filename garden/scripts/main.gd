@@ -6,6 +6,8 @@ const CollectorProcessManagerScript = preload("res://scripts/collector_process_m
 
 const SOURCE_REAL := "REAL"
 const SOURCE_DEMO := "DEMO"
+const COLLECTOR_FAILURES_BEFORE_RECOVERY := 3
+const MAX_COLLECTOR_RECOVERY_ATTEMPTS := 3
 const COLOR_TEXT := Color("#f2f7fd")
 const COLOR_MUTED := Color("#91acc2")
 const COLOR_ACCENT := Color("#76e1d3")
@@ -43,6 +45,9 @@ var _last_represented_count := 0
 var _last_connection_state := ""
 var _renderer_error := ""
 var _collector_error := ""
+var _collector_failure_streak := 0
+var _collector_recovery_attempts := 0
+var _collector_recovery_in_progress := false
 
 
 func _ready() -> void:
@@ -75,11 +80,41 @@ func _ready() -> void:
 
 func _start_bundled_collector() -> void:
 	var result: Dictionary = await _collector_manager.launch_and_configure(_snapshot_client)
-	if result.get("ok", false):
+	if result.get("ok", false) and _source_mode == SOURCE_REAL:
 		_collector_error = ""
 		_snapshot_client.set_polling_enabled(true)
+	elif result.get("ok", false):
+		_collector_manager.stop_owned_collector()
 	else:
 		_collector_error = str(result.get("error", "bundled_collector_start_failed · DEMO remains available"))
+	_refresh_status()
+
+
+func _recover_bundled_collector() -> void:
+	_collector_recovery_in_progress = true
+	_snapshot_client.set_polling_enabled(false)
+	for attempt in range(MAX_COLLECTOR_RECOVERY_ATTEMPTS - _collector_recovery_attempts):
+		if _source_mode != SOURCE_REAL:
+			_collector_recovery_in_progress = false
+			return
+		_collector_recovery_attempts += 1
+		await get_tree().create_timer(1.0 if attempt == 0 else 3.0).timeout
+		var result: Dictionary = await _collector_manager.launch_and_configure(_snapshot_client)
+		if _source_mode != SOURCE_REAL:
+			if result.get("ok", false):
+				_collector_manager.stop_owned_collector()
+			_collector_recovery_in_progress = false
+			return
+		if result.get("ok", false):
+			_collector_error = ""
+			_collector_failure_streak = 0
+			_snapshot_client.set_polling_enabled(true)
+			_collector_recovery_in_progress = false
+			_refresh_status()
+			return
+		_collector_error = str(result.get("error", "bundled_collector_recovery_failed · DEMO remains available"))
+	_collector_recovery_in_progress = false
+	_snapshot_client.set_polling_enabled(false)
 	_refresh_status()
 
 
@@ -105,7 +140,7 @@ func set_source_mode(mode: String) -> bool:
 	if mode == SOURCE_DEMO:
 		_start_demo_source()
 	else:
-		client.set_polling_enabled(true)
+		client.set_polling_enabled(not _collector_recovery_in_progress)
 	_refresh_status()
 	_refresh_details()
 	return true
@@ -433,6 +468,7 @@ func _on_snapshot_received(snapshot: Dictionary) -> void:
 	)
 	if not accepted["accepted"]:
 		return
+	_collector_failure_streak = 0
 	_garden.reconcile_processes(_registry.get_records())
 	_refresh_status()
 	_refresh_details()
@@ -440,6 +476,19 @@ func _on_snapshot_received(snapshot: Dictionary) -> void:
 
 func _on_request_failed(category: String, detail: String) -> void:
 	_registry.note_request_problem("%s: %s" % [category, detail])
+	if (
+		_collector_manager != null
+		and _collector_manager.should_manage_bundled_collector()
+		and _source_mode == SOURCE_REAL
+		and not _collector_recovery_in_progress
+	):
+		_collector_failure_streak += 1
+		if (
+			_collector_failure_streak >= COLLECTOR_FAILURES_BEFORE_RECOVERY
+			and _collector_manager.owned_collector_has_exited()
+			and _collector_recovery_attempts < MAX_COLLECTOR_RECOVERY_ATTEMPTS
+		):
+			call_deferred("_recover_bundled_collector")
 	_refresh_status()
 
 

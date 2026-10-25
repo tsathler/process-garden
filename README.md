@@ -81,9 +81,11 @@ godot --path garden
 In the editor, REAL mode connects to the local API. DEMO mode runs without the
 collector and offers reproducible synthetic populations of 50, 150, 300, or
 500 processes. REAL and DEMO are labeled distinctly. In an exported Windows
-application, the app starts its bundled collector on a dynamic loopback port
-and stops the collector it started when the app closes. Extract the release
-ZIP and run `ProcessGarden.exe`; see
+application, the app starts its bundled collector on a dynamic loopback port,
+stops it cooperatively on close, and restarts it after confirmed unexpected
+exit. The collector also watches the exact app process so abrupt app exit does
+not leave the helper running. Extract the release ZIP and run
+`ProcessGarden.exe`; see
 [packaging/windows/README.txt](packaging/windows/README.txt).
 
 The client accepts only loopback HTTP snapshot endpoints, polls one request at

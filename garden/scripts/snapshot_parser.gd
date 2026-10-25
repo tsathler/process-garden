@@ -62,6 +62,10 @@ static func validate_data(value: Variant) -> Dictionary:
 		return _failure("snapshot", "status must be 'ok' or 'partial'.")
 	if typeof(data["processes"]) != TYPE_ARRAY:
 		return _failure("snapshot", "processes must be an array.")
+	if data["status"] == "ok" and int(data["skipped_count"]) > 0:
+		return _failure("snapshot", "an 'ok' snapshot cannot have skipped processes.")
+	if data["status"] == "partial" and int(data["skipped_count"]) == 0:
+		return _failure("snapshot", "a 'partial' snapshot must report skipped processes.")
 
 	var timestamp_result := _parse_utc_timestamp(data["collected_at"])
 	if not timestamp_result["ok"]:

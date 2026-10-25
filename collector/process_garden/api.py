@@ -21,7 +21,7 @@ HOST = "127.0.0.1"
 SNAPSHOT_PATH = "/v1/snapshot"
 MAX_RESPONSE_BYTES = 1_048_576
 MAX_CONCURRENT_REQUESTS = 8
-MIN_REQUEST_INTERVAL_SECONDS = 0.1
+REQUESTS_PER_SECOND = 10.0
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -109,15 +109,23 @@ class _LoopbackHTTPServer(ThreadingMixIn, HTTPServer):
         self.snapshot_store = snapshot_store
         self._request_slots = threading.BoundedSemaphore(MAX_CONCURRENT_REQUESTS)
         self._rate_limit_lock = threading.Lock()
-        self._last_request_at = 0.0
+        self._rate_limit_capacity = float(MAX_CONCURRENT_REQUESTS)
+        self._rate_limit_tokens = self._rate_limit_capacity
+        self._rate_limit_updated_at = time.monotonic()
         super().__init__((HOST, port), _SnapshotRequestHandler)
 
     def allow_request(self) -> bool:
         now = time.monotonic()
         with self._rate_limit_lock:
-            if now - self._last_request_at < MIN_REQUEST_INTERVAL_SECONDS:
+            elapsed = max(0.0, now - self._rate_limit_updated_at)
+            self._rate_limit_tokens = min(
+                self._rate_limit_capacity,
+                self._rate_limit_tokens + elapsed * REQUESTS_PER_SECOND,
+            )
+            self._rate_limit_updated_at = now
+            if self._rate_limit_tokens < 1.0:
                 return False
-            self._last_request_at = now
+            self._rate_limit_tokens -= 1.0
             return True
 
     def process_request(self, request, client_address) -> None:

@@ -8,7 +8,13 @@ from pathlib import Path
 
 import process_garden.api as api_module
 import pytest
-from process_garden.api import MAX_RESPONSE_BYTES, CollectorAPI, _ready_file_path, _write_ready_file
+from process_garden.api import (
+    MAX_CONCURRENT_REQUESTS,
+    MAX_RESPONSE_BYTES,
+    CollectorAPI,
+    _ready_file_path,
+    _write_ready_file,
+)
 from process_garden.collector import ProcessRecord, Snapshot
 
 
@@ -159,18 +165,84 @@ def test_unavailable_route_and_write_methods_are_rejected():
         stop_api(api, thread)
 
 
-def test_request_rate_is_limited():
+def test_get_request_bodies_are_rejected():
+    api, thread, _ = start_api()
+    try:
+        host, port = api.address
+        status, _, body = request(f"http://{host}:{port}/v1/snapshot", method="GET", data=b"{}")
+
+        assert status == 400
+        assert json.loads(body) == {"error": "request_body_not_supported"}
+    finally:
+        stop_api(api, thread)
+
+
+def test_request_rate_allows_a_concurrent_burst_then_refills():
     api, thread, _ = start_api()
     try:
         host, port = api.address
         url = f"http://{host}:{port}/v1/snapshot"
-        assert request(url)[0] == 200
+        for _ in range(MAX_CONCURRENT_REQUESTS):
+            assert api._server.allow_request()
 
         status, _, body = request(url)
 
         assert status == 429
         assert json.loads(body) == {"error": "rate_limit_exceeded"}
+
+        time.sleep(0.11)
+
+        assert request(url)[0] == 200
     finally:
+        stop_api(api, thread)
+
+
+def test_concurrent_clients_fit_within_the_burst_limit():
+    api, thread, _ = start_api()
+    barrier = threading.Barrier(MAX_CONCURRENT_REQUESTS)
+    statuses = []
+    failures = []
+    host, port = api.address
+    url = f"http://{host}:{port}/v1/snapshot"
+
+    def fetch_snapshot():
+        try:
+            barrier.wait(timeout=2)
+            statuses.append(request(url)[0])
+        except Exception as exc:  # Collect worker failures for the main test thread.
+            failures.append(exc)
+
+    clients = [threading.Thread(target=fetch_snapshot) for _ in range(MAX_CONCURRENT_REQUESTS)]
+    try:
+        for client in clients:
+            client.start()
+        for client in clients:
+            client.join(timeout=3)
+
+        assert all(not client.is_alive() for client in clients)
+        assert failures == []
+        assert statuses == [200] * MAX_CONCURRENT_REQUESTS
+    finally:
+        stop_api(api, thread)
+
+
+def test_api_returns_503_when_all_concurrent_request_slots_are_occupied():
+    api, thread, _ = start_api()
+    host, port = api.address
+    url = f"http://{host}:{port}/v1/snapshot"
+    acquired = 0
+    try:
+        for _ in range(MAX_CONCURRENT_REQUESTS):
+            assert api._server._request_slots.acquire(blocking=False)
+            acquired += 1
+
+        status, _, body = request(url)
+
+        assert status == 503
+        assert body == b""
+    finally:
+        for _ in range(acquired):
+            api._server._request_slots.release()
         stop_api(api, thread)
 
 

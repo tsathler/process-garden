@@ -1,8 +1,10 @@
 import json
+import math
 import sys
 
 import process_garden.collector as collector_module
-from process_garden.collector import ProcessCollector
+import pytest
+from process_garden.collector import MAX_INTERVAL_SECONDS, ProcessCollector
 
 
 class AccessDenied(Exception):
@@ -65,6 +67,31 @@ class FakeProcess:
         return self._read("cpu_percent", self.cpu)
 
 
+@pytest.mark.parametrize(
+    "interval_seconds",
+    [0, -1, math.nan, math.inf, -math.inf, 0.0001, MAX_INTERVAL_SECONDS * 2, True],
+)
+def test_invalid_sampling_intervals_are_rejected(interval_seconds):
+    with pytest.raises(ValueError, match="interval_seconds"):
+        ProcessCollector(interval_seconds=interval_seconds, psutil_module=FakePsutil())
+
+
+def test_sampling_interval_rounds_to_a_positive_contract_value():
+    collector = ProcessCollector(interval_seconds=0.001, psutil_module=FakePsutil())
+
+    assert collector.collect().interval_ms == 1
+
+
+def test_sampling_interval_setter_preserves_the_previous_value_on_invalid_input():
+    collector = ProcessCollector(interval_seconds=0.25, psutil_module=FakePsutil())
+
+    with pytest.raises(ValueError, match="finite"):
+        collector.interval_seconds = math.nan
+
+    assert collector.interval_seconds == 0.25
+    assert collector.interval_ms == 250
+
+
 def test_identity_and_first_cpu_sample_are_stable():
     proc = FakeProcess(10, 100.5)
     collector = ProcessCollector(psutil_module=FakePsutil([proc]))
@@ -89,6 +116,18 @@ def test_pid_reuse_with_new_create_time_gets_new_identity():
 
     assert (record.pid, record.create_time) == (10, 200.5)
     assert record.cpu_percent is None
+
+
+def test_exited_process_instances_are_released_from_cpu_state():
+    process = FakeProcess(10, 100.5)
+    fake = FakePsutil([process])
+    collector = ProcessCollector(psutil_module=fake)
+    collector.collect()
+
+    fake.processes = []
+    collector.collect()
+
+    assert collector._cpu_processes == {}
 
 
 def test_metrics_update_on_each_sample():
@@ -173,3 +212,13 @@ def test_collector_cli_handles_keyboard_interrupt(monkeypatch, capsys):
     collector_module.main()
 
     assert capsys.readouterr().out == "{}\n"
+
+
+def test_collector_cli_rejects_non_finite_interval(monkeypatch, capsys):
+    monkeypatch.setattr(sys, "argv", ["process-garden-collector", "--interval", "nan"])
+
+    with pytest.raises(SystemExit) as error:
+        collector_module.main()
+
+    assert error.value.code == 2
+    assert "interval_seconds must be a finite number" in capsys.readouterr().err

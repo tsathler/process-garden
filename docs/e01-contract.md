@@ -16,7 +16,7 @@ Each process record contains `pid` (non-negative integer), `create_time` (Unix t
 
 ## Metric semantics
 
-The default configured interval is 2,000 ms. The collector samples when `collect()` is called; `run()` schedules repeated samples at the configured cadence. CPU uses psutil's non-blocking per-process measurement. `100` means one logical CPU fully used, so multi-threaded processes can exceed 100. The first successfully collected sample for an identity reports `null`, since no prior interval exists; a measured zero is reported as `0.0`.
+The default configured interval is 2,000 ms. Configured intervals must be finite, at least 1 ms, and no greater than the platform's supported thread-wait limit; intervals outside this range are rejected. The collector samples when `collect()` is called; `run()` schedules repeated samples at the configured cadence. CPU uses psutil's non-blocking per-process measurement. `100` means one logical CPU fully used, so multi-threaded processes can exceed 100. The first successfully collected sample for an identity reports `null`, since no prior interval exists; a measured zero is reported as `0.0`.
 
 RSS is the resident set size from psutil's `memory_info().rss`, in bytes. CPU reflects the period since the previous CPU sample for that process, so the first report is not a lifetime average.
 
@@ -30,7 +30,7 @@ Access denied, process exit, and zombie errors are handled per process and incre
 
 `GET /v1/snapshot` returns the latest snapshot as `application/json`. The server binds only to `127.0.0.1` on port `8765` by default. It collects once before serving, then refreshes on a background thread independently of requests. `interval_ms` reports the configured sampling interval; `collected_at` reports when that snapshot was collected.
 
-The API accepts no request body and no methods that modify data. It limits each snapshot response to 1 MiB, accepts at most eight concurrent requests, and rate-limits snapshot reads to ten per second. Errors use a small JSON object with an `error` code. An unexpectedly failed collection leaves the last valid snapshot available; consumers can inspect `collected_at` to determine its age.
+The API accepts no request body and no methods that modify data. It limits each snapshot response to 1 MiB, accepts at most eight concurrent requests, and rate-limits snapshot reads to ten per second with a burst capacity of eight requests. Errors use a small JSON object with an `error` code. An unexpectedly failed collection leaves the last valid snapshot available; consumers can inspect `collected_at` to determine its age.
 
 The selected `status` values are `ok` and `partial`; a collector-wide failure does not create a new snapshot or change the last valid one. CPU values retain psutil's above-100 semantics. Consumers should use `sequence` to detect skipped snapshots.
 

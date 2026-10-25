@@ -78,6 +78,12 @@ func _test_invalid_json_and_contract() -> void:
 	var fractional_integer := _snapshot(1, 1000.0, "ok", [])
 	fractional_integer["sequence"] = 1.5
 	_check(not Parser.validate_data(fractional_integer)["ok"], "fractional integer rejected")
+	var inconsistent_ok := _snapshot(1, 1000.0, "ok", [])
+	inconsistent_ok["skipped_count"] = 1
+	_check(not Parser.validate_data(inconsistent_ok)["ok"], "ok snapshot rejects skipped records")
+	var inconsistent_partial := _snapshot(1, 1000.0, "partial", [])
+	inconsistent_partial["skipped_count"] = 0
+	_check(not Parser.validate_data(inconsistent_partial)["ok"], "partial snapshot requires skipped records")
 
 
 func _test_timestamp_calendar_validation() -> void:
@@ -1790,7 +1796,7 @@ func _snapshot(sequence: int, collected_unix: float, status: String, processes: 
 		"interval_ms": 2000,
 		"status": status,
 		"processes": processes,
-		"skipped_count": 0,
+		"skipped_count": 1 if status == "partial" else 0,
 		"_collected_at_unix": collected_unix,
 	}
 

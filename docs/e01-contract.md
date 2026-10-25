@@ -34,6 +34,8 @@ The API accepts no request body and no methods that modify data. It limits each 
 
 The selected `status` values are `ok` and `partial`; a collector-wide failure does not create a new snapshot or change the last valid one. CPU values retain psutil's above-100 semantics. Consumers should use `sequence` to detect skipped snapshots.
 
+The exported Windows app starts its own collector with an operating-system-selected loopback port. It requests normal shutdown through a token-specific temporary signal file. The collector also holds a synchronization handle to the exact app process and exits when that process terminates, including abrupt app exit. The app may restart the collector after three consecutive request failures only when its launched collector PID is no longer running; it never sends a process-termination signal. These lifecycle controls do not apply to processes represented in snapshots.
+
 ## E01.3 Godot client
 
 The Godot client polls the loopback endpoint every two seconds using `HTTPRequest`; each request has a three-second timeout, a 1 MiB response limit, and redirects disabled. Parsing and contract validation complete before the process registry changes. Godot's JSON parser exposes JSON numeric values as floating-point variants, so fields defined as integers are accepted only when finite, in range, and mathematically integral; PID and `skipped_count` are non-negative, while sequence, interval, and memory have their separately documented positive/non-negative bounds. CPU and creation time remain finite floating-point values.

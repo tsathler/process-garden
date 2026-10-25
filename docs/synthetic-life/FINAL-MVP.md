@@ -28,10 +28,14 @@ processes.
   `HabitatLayout` surfaces and ground points. No placement or habitat contract
   changed.
 - On an exported Windows app only, `CollectorProcessManager` launches the
-  bundled collector with `--port 0`, validates a short-lived readiness token
-  file, then enables the existing loopback-only `SnapshotClient`. It never
-  adopts another collector. Shutdown targets only the PID returned by
-  `OS.create_process`.
+  bundled collector with `--port 0`, validates a short-lived readiness file,
+  then enables the existing loopback-only `SnapshotClient`. It never adopts
+  another collector. Normal shutdown uses a token-specific temporary signal;
+  the collector also waits on a Windows synchronization handle for the exact
+  app process, so abrupt app exit does not leave the helper running. After
+  three consecutive request failures, the app retries startup up to three
+  times only after confirming its launched collector PID is no longer running.
+  It never sends a process-termination signal.
 - The API remains read-only and bound to `127.0.0.1`; the port is selected by
   the operating system. No service, admin rights, external endpoint, or runtime
   network dependency is used.
@@ -48,6 +52,16 @@ suites passed on 2026-10-18. Total: **1,932 passed, 0 failed**; each process
 returned exit code 0 and the logs contain no `ERROR:` or `SCRIPT ERROR:`.
 Ruff check, Ruff format check, and Python pytest also passed (**19 passed**).
 Individual logs are in [`logs/linux-2026-10-18/`](logs/linux-2026-10-18/).
+
+### Follow-up lifecycle validation — Linux, 2026-10-25
+
+After adding cooperative stop signals, owner-process monitoring, and bounded
+collector recovery, Ruff check and format check passed and pytest passed (**39
+tests**). Godot 4.7.2 headless import and all five suites passed (**1,934
+tests**). Deterministic fakes verified the exact owner PID/access mask passed
+to the Windows-handle wrapper, stop-file cleanup, and collector shutdown after
+owner exit. These tests do not exercise Win32 itself. Native Windows validation
+of normal/abrupt close and recovery remains pending.
 
 ### Windows native
 
@@ -71,8 +85,10 @@ and the PyInstaller bootloader. Archive inspection found no `.godot`, `.venv`,
 directory and launched on Windows. The application started its own collector
 on dynamic loopback port 50764, the endpoint returned a snapshot containing
 339 processes, and normal app close returned exit code 0 and removed the owned
-collector process. This verifies native startup, HTTP, and shutdown; a human
-visual review of the app is still pending.
+collector process. This verifies the previous implementation's native startup,
+HTTP, and normal shutdown. The cooperative shutdown signal, owner-process
+watch, and crash-recovery changes added after Candidate11 still require native
+Windows validation; a human visual review of the app is also pending.
 
 ### Windows Synthetic benchmark
 

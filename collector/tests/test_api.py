@@ -1,3 +1,4 @@
+import ctypes
 import json
 import sys
 import threading
@@ -13,6 +14,7 @@ from process_garden.api import (
     MAX_RESPONSE_BYTES,
     CollectorAPI,
     _ready_file_path,
+    _stop_file_path,
     _write_ready_file,
 )
 from process_garden.collector import ProcessRecord, Snapshot
@@ -86,6 +88,18 @@ def stop_api(api, thread):
     assert not thread.is_alive()
 
 
+class FakeOwnerMonitor:
+    def __init__(self):
+        self.exited = threading.Event()
+        self.closed = False
+
+    def wait(self, timeout_ms):
+        return self.exited.wait(timeout_ms / 1000.0)
+
+    def close(self):
+        self.closed = True
+
+
 def test_ready_file_publishes_only_the_bound_loopback_endpoint(tmp_path: Path):
     ready_file = tmp_path / "runtime" / "collector.json"
 
@@ -109,6 +123,94 @@ def test_ready_token_resolves_to_a_safe_temporary_filename():
     assert _ready_file_path("pg-123-456").name == "process-garden-pg-123-456.json"
     with pytest.raises(ValueError, match="ready token"):
         _ready_file_path("../../outside")
+
+
+def test_stop_token_resolves_to_a_safe_temporary_filename():
+    assert _stop_file_path("pg-123-456").name == "process-garden-pg-123-456.stop"
+    with pytest.raises(ValueError, match="stop token"):
+        _stop_file_path("../../outside")
+
+
+def test_stop_signal_stops_api_and_removes_signal(tmp_path: Path):
+    stop_file = tmp_path / "collector.stop"
+    ready_file = tmp_path / "collector.json"
+    ready_file.write_text("{}", encoding="ascii")
+    api = CollectorAPI(FakeCollector(), port=0, stop_file=stop_file, ready_file=ready_file)
+    thread = threading.Thread(target=api.serve_forever, daemon=True)
+    thread.start()
+    try:
+        assert api._server.serve_loop_ready.wait(timeout=1)
+        stop_file.write_text("stop", encoding="ascii")
+        thread.join(timeout=2)
+
+        assert not thread.is_alive()
+        assert not stop_file.exists()
+        assert not ready_file.exists()
+    finally:
+        stop_api(api, thread)
+
+
+def test_owner_process_exit_stops_api_and_closes_monitor():
+    owner = FakeOwnerMonitor()
+    api = CollectorAPI(FakeCollector(), port=0, owner_monitor=owner)
+    thread = threading.Thread(target=api.serve_forever, daemon=True)
+    thread.start()
+    try:
+        assert api._server.serve_loop_ready.wait(timeout=1)
+        owner.exited.set()
+        thread.join(timeout=2)
+
+        assert not thread.is_alive()
+        assert owner.closed
+    finally:
+        stop_api(api, thread)
+
+
+def test_windows_owner_monitor_waits_on_the_exact_process_handle(monkeypatch):
+    class FakeFunction:
+        def __init__(self, call):
+            self.call = call
+
+        def __call__(self, *args):
+            return self.call(*args)
+
+    class FakeKernel32:
+        def __init__(self):
+            self.open_arguments = None
+            self.wait_result = api_module._WindowsOwnerMonitor.WAIT_TIMEOUT
+            self.closed_handle = None
+            self.OpenProcess = FakeFunction(self.open_process)
+            self.WaitForSingleObject = FakeFunction(self.wait_for_single_object)
+            self.CloseHandle = FakeFunction(self.close_handle)
+
+        def open_process(self, access, inherit, owner_pid):
+            self.open_arguments = (access, inherit, owner_pid)
+            return 4321
+
+        def wait_for_single_object(self, handle, timeout_ms):
+            assert handle == 4321
+            assert timeout_ms == 0
+            return self.wait_result
+
+        def close_handle(self, handle):
+            self.closed_handle = handle
+            return True
+
+    kernel32 = FakeKernel32()
+    monkeypatch.setattr(ctypes, "WinDLL", lambda *_args, **_kwargs: kernel32, raising=False)
+
+    owner = api_module._WindowsOwnerMonitor(7654)
+
+    assert kernel32.open_arguments == (
+        api_module._WindowsOwnerMonitor.SYNCHRONIZE,
+        False,
+        7654,
+    )
+    assert not owner.wait(0)
+    kernel32.wait_result = api_module._WindowsOwnerMonitor.WAIT_OBJECT_0
+    assert owner.wait(0)
+    owner.close()
+    assert kernel32.closed_handle == 4321
 
 
 def test_get_snapshot_returns_latest_json_on_loopback():
@@ -288,7 +390,7 @@ def test_api_cli_handles_keyboard_interrupt(monkeypatch, capsys):
     class InterruptingAPI:
         address = ("127.0.0.1", 8765)
 
-        def __init__(self, collector, port):
+        def __init__(self, collector, port, **_kwargs):
             pass
 
         def serve_forever(self):

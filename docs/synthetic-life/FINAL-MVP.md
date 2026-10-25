@@ -1,8 +1,9 @@
 # Process Garden — Synthetic Life Sanctuary MVP
 
-**Status: release candidate built and native Windows smoke-tested; artistic
-review and one high-load performance caveat remain.** This document records
-implementation evidence rather than approvals not yet given.
+**Status: an earlier candidate was built and smoke-tested on Windows; the
+latest collector lifecycle changes still need native validation. Artistic
+review and one high-load performance caveat also remain.** This document
+records implementation evidence rather than approvals not yet given.
 
 ## Closed MVP scope
 
